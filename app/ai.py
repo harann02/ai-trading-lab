@@ -34,14 +34,19 @@ def candidates(env=None, cfg=None):
         out.append({"name": name, "key": env[var], "base": llm.get("base_url") or b, "model": llm.get("model") or env.get("AITL_LLM_MODEL") or model, "fmt": fmt})
     return out
 
+def _ok(r):
+    if not r.ok: raise RuntimeError(f"HTTP {r.status_code}: {r.text[:160]!r}")
+
 def _call(p, system, user, max_tokens=700, timeout=45):
     if p["fmt"] == "anthropic":
         r = requests.post(p["base"] + "/messages", headers={"x-api-key": p["key"], "anthropic-version": "2023-06-01"}, timeout=timeout,
                           json={"model": p["model"], "max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": user}], "temperature": 0.2})
-        r.raise_for_status(); return r.json()["content"][0]["text"]
+        _ok(r); return r.json()["content"][0]["text"]
     r = requests.post(p["base"] + "/chat/completions", headers={"Authorization": f"Bearer {p['key']}"}, timeout=timeout,
                       json={"model": p["model"], "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "max_tokens": max_tokens, "temperature": 0.2})
-    r.raise_for_status(); return r.json()["choices"][0]["message"]["content"]
+    _ok(r)
+    try: return r.json()["choices"][0]["message"]["content"]
+    except Exception: raise RuntimeError(f"unexpected response HTTP {r.status_code} {r.headers.get('content-type')}: {r.text[:120]!r}")
 
 _ACTIVE = {}; LAST_ERRS = []
 def active_provider(env=None, cfg=None, force=False):
