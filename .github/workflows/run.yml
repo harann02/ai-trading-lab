@@ -1,0 +1,96 @@
+name: scan-monitor-deploy
+on:
+  schedule:
+    - cron: "30 9 * * 1-5"        # Bursa scan 17:30 MYT Mon-Fri
+    - cron: "30 21 * * 1-5"       # US scan 05:30 MYT Tue-Sat (US session of Mon-Fri)
+    - cron: "5,35 1-8 * * 1-5"    # Bursa intraday monitor (09:05-16:35 MYT, every 30 min, only acts if market open)
+    - cron: "5,35 13-20 * * 1-5"  # US intraday monitor (guarded by NYSE calendar; EDT/EST both covered)
+    - cron: "0 2 * * 6"           # weekly review Sat 10:00 MYT
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "scan_all | scan_bursa | scan_us | monitor | weekly | export"
+        default: "scan_all"
+  push:
+    branches: [main]
+    paths: ["site_src/**", "export_static.py", "ci_run.py", ".github/workflows/**", "app/**"]
+
+# one run at a time: the ledger DB lives on branch `data`, overlapping runs would race
+concurrency:
+  group: ailab-ledger
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { ref: data, path: dbstore }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - name: Decide action
+        id: act
+        env:
+          EVT: ${{ github.event_name }}
+          SCHED: ${{ github.event.schedule }}
+          INPUT: ${{ github.event.inputs.action }}
+        run: |
+          a=export
+          if [ "$EVT" = "workflow_dispatch" ]; then a="${INPUT:-scan_all}"
+          elif [ "$EVT" = "schedule" ]; then
+            case "$SCHED" in
+              "30 9 * * 1-5") a=scan_bursa;;
+              "30 21 * * 1-5") a=scan_us;;
+              "0 2 * * 6") a=weekly;;
+              *) a=monitor;;
+            esac
+          fi
+          echo "action=$a" >> "$GITHUB_OUTPUT"; echo "action=$a"
+      - name: Run engine (scan / monitor / reconcile)
+        env:
+          AITL_DB: ${{ github.workspace }}/dbstore/ailab.db
+        run: python ci_run.py "${{ steps.act.outputs.action }}"
+      - name: Export static snapshot
+        env:
+          AITL_DB: ${{ github.workspace }}/dbstore/ailab.db
+          AITL_TRIGGER: ${{ github.event_name }}:${{ steps.act.outputs.action }}
+        run: python export_static.py site
+      - name: Persist ledger DB to branch data (single squashed commit)
+        run: |
+          cd dbstore
+          python - <<'PY'
+          import sqlite3, os
+          c = sqlite3.connect("ailab.db"); c.execute("PRAGMA wal_checkpoint(TRUNCATE)"); c.execute("PRAGMA journal_mode=DELETE"); c.close()
+          PY
+          rm -f ailab.db-wal ailab.db-shm
+          git config user.name "ailab-bot"; git config user.email "ailab-bot@users.noreply.github.com"
+          git checkout --orphan tmp-data
+          git add -A
+          git commit -qm "ledger snapshot ${GITHUB_RUN_ID} ($(date -u +%FT%TZ))"
+          git push -f origin tmp-data:data
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,11 @@
+[Unit]
+Description=AI Trading Lab - persistent scheduler (scans, monitoring); independent of the browser and web server
+After=network-online.target
+[Service]
+WorkingDirectory=/workspace/ai-trading-lab
+ExecStart=/workspace/ai-trading-lab/.venv/bin/python scheduler.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+[Install]
+WantedBy=multi-user.target

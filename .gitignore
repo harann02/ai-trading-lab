@@ -1,0 +1,14 @@
+.env
+.env.*
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/*.db
+data/*.db-*
+data/archive/
+logs/
+site/
+*.log
+*.err
+tunnel*.sh

@@ -1,0 +1,11 @@
+[Unit]
+Description=AI Trading Lab - web/API (paper trading)
+After=network-online.target
+[Service]
+WorkingDirectory=/workspace/ai-trading-lab
+ExecStart=/workspace/ai-trading-lab/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8765
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+[Install]
+WantedBy=multi-user.target
