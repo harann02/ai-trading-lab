@@ -1,30 +1,27 @@
 name: scan-monitor-deploy
 on:
   schedule:
-    - cron: "30 9 * * 1-5"        # Bursa scan 17:30 MYT Mon-Fri
-    - cron: "30 21 * * 1-5"       # US scan 05:30 MYT Tue-Sat (US session of Mon-Fri)
-    - cron: "5,35 1-8 * * 1-5"    # Bursa intraday monitor (09:05-16:35 MYT, every 30 min, only acts if market open)
-    - cron: "5,35 13-20 * * 1-5"  # US intraday monitor (guarded by NYSE calendar; EDT/EST both covered)
-    - cron: "0 2 * * 6"           # weekly review Sat 10:00 MYT
+    - cron: "30 21 * * 1-5"       # US scan: 21:30 UTC = 05:30 MYT Tue-Sat (after the NYSE close in both EDT and EST)
+    - cron: "*/15 13-20 * * 1-5"  # US monitor every ~15 min during US hours (13:00-20:59 UTC covers EDT+EST; guarded by the NYSE calendar; GitHub cron is best-effort)
+    - cron: "0 2 * * 6"           # weekly strategy report Sat 10:00 MYT
   workflow_dispatch:
     inputs:
       action:
-        description: "scan_all | scan_bursa | scan_us | monitor | weekly | export"
-        default: "scan_all"
+        description: "scan | monitor | control | weekly | export"
+        default: "scan"
   push:
     branches: [main]
-    paths: ["site_src/**", "export_static.py", "ci_run.py", ".github/workflows/**", "app/**"]
-
-# one run at a time: the ledger DB lives on branch `data`, overlapping runs would race
+    paths: ["site_src/**", "export_static.py", "ci_run.py", ".github/workflows/**", "app/**", "tests/**", "requirements.txt", "docs/**"]
+# Bursa jobs were REMOVED in v2.0 (US-only). One run at a time: the ledger DB lives on branch `data`.
 concurrency:
   group: ailab-ledger
   cancel-in-progress: false
-
 permissions:
   contents: write
   pages: write
   id-token: write
-
+  models: read       # lets GITHUB_TOKEN call GitHub Models (free LLM tier) for AI memos
+  actions: write
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -34,18 +31,20 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip }
       - run: pip install -r requirements.txt
-      - run: python -m pytest -q
+      - run: python -m pytest -q | tee pytest-ci.txt
+      - run: tail -3 pytest-ci.txt >> "$GITHUB_STEP_SUMMARY"
 
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
-        with: { ref: data, path: dbstore }
+        with: { ref: data, path: dbstore, fetch-depth: 1 }
+      - run: mkdir -p dbstore/control
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip }
       - run: pip install -r requirements.txt
@@ -57,40 +56,55 @@ jobs:
           INPUT: ${{ github.event.inputs.action }}
         run: |
           a=export
-          if [ "$EVT" = "workflow_dispatch" ]; then a="${INPUT:-scan_all}"
+          if [ "$EVT" = "workflow_dispatch" ]; then a="${INPUT:-scan}"
           elif [ "$EVT" = "schedule" ]; then
             case "$SCHED" in
-              "30 9 * * 1-5") a=scan_bursa;;
-              "30 21 * * 1-5") a=scan_us;;
+              "30 21 * * 1-5") a=scan;;
               "0 2 * * 6") a=weekly;;
               *) a=monitor;;
             esac
           fi
           echo "action=$a" >> "$GITHUB_OUTPUT"; echo "action=$a"
-      - name: Run engine (scan / monitor / reconcile)
+      - name: Run engine (apply owner controls, scan / monitor)
+        id: engine
         env:
           AITL_DB: ${{ github.workspace }}/dbstore/ailab.db
+          AITL_CONTROL_DIR: ${{ github.workspace }}/dbstore/control
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python ci_run.py "${{ steps.act.outputs.action }}"
       - name: Export static snapshot
+        if: steps.engine.outputs.changed != 'false'
         env:
           AITL_DB: ${{ github.workspace }}/dbstore/ailab.db
           AITL_TRIGGER: ${{ github.event_name }}:${{ steps.act.outputs.action }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python export_static.py site
-      - name: Persist ledger DB to branch data (single squashed commit)
+      - name: Persist ledger DB + control file to branch data (single squashed commit, race-safe)
+        if: steps.engine.outputs.changed != 'false'
         run: |
           cd dbstore
           python - <<'PY'
-          import sqlite3, os
-          c = sqlite3.connect("ailab.db"); c.execute("PRAGMA wal_checkpoint(TRUNCATE)"); c.execute("PRAGMA journal_mode=DELETE"); c.close()
+          import sqlite3
+          c = sqlite3.connect("ailab.db"); c.execute("PRAGMA wal_checkpoint(TRUNCATE)"); c.execute("PRAGMA journal_mode=DELETE"); c.execute("VACUUM"); c.close()
           PY
           rm -f ailab.db-wal ailab.db-shm
           git config user.name "ailab-bot"; git config user.email "ailab-bot@users.noreply.github.com"
-          git checkout --orphan tmp-data
-          git add -A
-          git commit -qm "ledger snapshot ${GITHUB_RUN_ID} ($(date -u +%FT%TZ))"
-          git push -f origin tmp-data:data
+          for i in 1 2 3 4 5; do
+            git fetch -q origin data:refs/remotes/origin/data
+            HEAD_SHA=$(git rev-parse origin/data)
+            # the owner may have written control/commands.json while we ran: the remote copy wins
+            mkdir -p control; git show origin/data:control/commands.json > control/commands.json 2>/dev/null || true
+            git checkout -q --orphan tmp-data-$i
+            git add -A
+            git commit -qm "ledger snapshot ${GITHUB_RUN_ID} ($(date -u +%FT%TZ))"
+            if git push -q --force-with-lease=data:$HEAD_SHA origin tmp-data-$i:data; then echo "pushed"; break; fi
+            echo "data branch moved during run, retrying ($i)"; git checkout -q --detach origin/data; sleep 3
+          done
       - uses: actions/configure-pages@v5
+        if: steps.engine.outputs.changed != 'false'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.engine.outputs.changed != 'false'
         with: { path: site }
       - id: deploy
+        if: steps.engine.outputs.changed != 'false'
         uses: actions/deploy-pages@v4

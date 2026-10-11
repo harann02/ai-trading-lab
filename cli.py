@@ -1,16 +1,17 @@
-"""CLI: python cli.py scan [BURSA|US] | monitor | backtest | report | status"""
+"""CLI (v2.0, US only): python cli.py scan | monitor | validate | report"""
 import sys, json
 from datetime import datetime, timezone
-from app import engine, data, db, reports, backtest
+from app import engine, data, db, reports, backtest, trading, research
+from app.providers.yf import YFinanceProvider
 
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"; engine.ready()
     if cmd == "scan":
-        m = sys.argv[2].upper() if len(sys.argv) > 2 else None
-        r = engine.scan(data.YFProvider(), market=m); print(json.dumps(r, indent=1, default=str))
-    elif cmd == "monitor": print(engine.execute_pending(data.YFProvider()))
+        r = trading.run_scan(YFinanceProvider()); print(json.dumps({k: v for k, v in r.items() if k != "capabilities"}, indent=1, default=str)[:4000])
+    elif cmd == "monitor": print(trading.execute_pending(YFinanceProvider()))
+    elif cmd == "validate": import run_validation; run_validation.main()
     elif cmd == "backtest":
-        r = backtest.run(); backtest.save(r); print(json.dumps({k: r[k] for k in ("label", "period", "selected_params", "test_result")}, indent=1, default=str))
+        print("legacy v1 backtester retired; use: python cli.py validate")
     elif cmd == "report": print(reports.daily_report()["narrative"])
     else: print("usage: cli.py scan|monitor|backtest|report")
 main()

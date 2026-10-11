@@ -48,13 +48,13 @@ def pending_buy_reserved():
     rs = c.execute("SELECT * FROM orders WHERE side='BUY' AND status='pending'").fetchall(); c.close()
     return rs
 
-def create_order(*, decision_key, decision_id, symbol, market, side, qty, ref_price, stop, target, reason, now, needs_approval=False):
+def create_order(*, decision_key, decision_id, symbol, market, side, qty, ref_price, stop, target, reason, now, needs_approval=False, strategy_id=None, signal_status=None, plan_json=None):
     """Idempotent: unique decision_key. Returns order id or None if it already exists."""
     c = db.conn()
     try:
-        cur = c.execute("INSERT INTO orders(decision_key,decision_id,created_ts,updated_ts,symbol,market,side,qty,ref_price,stop,target,status,reason,needs_approval)"
-                        " VALUES(?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?)",
-                        (decision_key, decision_id, ledger.iso(now), ledger.iso(now), symbol, market, side, qty, ref_price, stop, target, reason, int(needs_approval)))
+        cur = c.execute("INSERT INTO orders(decision_key,decision_id,created_ts,updated_ts,symbol,market,side,qty,ref_price,stop,target,status,reason,needs_approval,strategy_id,signal_status,plan_json)"
+                        " VALUES(?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?,?,?,?)",
+                        (decision_key, decision_id, ledger.iso(now), ledger.iso(now), symbol, market, side, qty, ref_price, stop, target, reason, int(needs_approval), strategy_id, signal_status, plan_json))
         oid = cur.lastrowid
         c.execute("INSERT INTO order_events(order_id,ts,status,note) VALUES(?,?,?,?)", (oid, ledger.iso(now), "pending", reason))
         c.commit(); return oid
@@ -83,6 +83,8 @@ def scan(provider, now=None, market=None, trade=True, refresh=True):
     """Full EOD workflow for one market (or all enabled). Idempotent for repeated runs on the same data."""
     now = _now(now); ready(); cfg = db.get_settings(); summary = {"started": ledger.iso(now), "markets": {}, "data_mode": provider.mode}
     markets = [market] if market else cfg["markets_enabled"]
+    if not config.bursa_allowed(): markets = [m for m in markets if m != "BURSA"]       # v2: Bursa retired (legacy regression tests only)
+    if not markets: return {**summary, "aborted": "no enabled market (Bursa retired in v2; US is handled by app.trading.run_scan)"}
     db.event("INFO", "scan", f"scan start markets={markets} data_mode={provider.mode}", ledger.iso(now))
     # 1. data collection
     syms = universe(cfg, market) + benchmarks(cfg, market) if market else universe(cfg) + benchmarks(cfg)
@@ -242,8 +244,8 @@ def execute_pending(provider, now=None, refresh=True) -> list:
     """Simulated execution. Only while the market is open; fills at the session's open from a FRESH (today's) delayed bar.
     Also evaluates intraday stop hits (fill at stop, or at open if the open gapped through it)."""
     now = _now(now); cfg = db.get_settings(); log = []
-    c = db.conn(); pend = [dict(r) for r in c.execute("SELECT * FROM orders WHERE status='pending' ORDER BY id")]; c.close()
-    held = ledger.positions(); markets_open = {m for m in cal.MARKETS if cal.is_open(m, now)}
+    c = db.conn(); pend = [dict(r) for r in c.execute("SELECT * FROM orders WHERE status='pending' AND strategy_id IS NULL ORDER BY id")]; c.close()
+    held = ledger.positions(); markets_open = {m for m in cal.MARKETS if cal.is_open(m, now) and (m != "BURSA" or config.bursa_allowed())}
     watch = {o["symbol"] for o in pend if o["market"] in markets_open} | {s for s, p in held.items() if p["market"] in markets_open}
     if refresh and watch and provider.mode == "LIVE":
         try:

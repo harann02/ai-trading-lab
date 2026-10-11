@@ -42,6 +42,7 @@ def replay(rws):
     """Returns (positions dict, closed trades list). Average-cost method in MYR (buy fees capitalised)."""
     pos, trades = {}, []
     for r in rws:
+        if r.get("strategy_id"): continue          # v2 strategy/USD rows are replayed by portfolio.replay2 (separate cost basis in USD)
         if r["kind"] == "BUY":
             p = pos.setdefault(r["symbol"], {"symbol": r["symbol"], "market": r["market"], "qty": 0, "cost_myr": 0.0, "first_ts": r["ts"], "fees": 0.0, "slip": 0.0, "ccy": r["ccy"]})
             p["qty"] += r["qty"]; p["cost_myr"] += r["gross_myr"] + r["fees_myr"]; p["fees"] += r["fees_myr"]; p["slip"] += r["slippage_myr"] or 0
@@ -83,6 +84,9 @@ def mark_positions(now=None, pos=None) -> list:
 def equity_now(now=None) -> dict:
     now = now or datetime.now(timezone.utc); h = mark_positions(now); c = cash()
     mv = sum(x["market_value_myr"] for x in h)
+    from . import portfolio
+    v2 = portfolio.usd_assets_myr(now)               # USD cash + USD holdings of all strategy sleeves, in MYR at mid FX (0 if no v2 rows)
+    mv += v2["positions_myr"]; c += v2["cash_myr"]
     return {"cash": c, "positions_value": mv, "equity": c + mv, "exposure_pct": (mv / (c + mv) * 100) if c + mv else 0,
             "holdings": h, "stale": [x["symbol"] for x in h if x["data_flag"]]}
 
@@ -92,6 +96,8 @@ def state_asof(d, allr=None):
     cutoff_ts = datetime(d.year, d.month, d.day, 23, 59, 59, tzinfo=MYT).astimezone(timezone.utc).isoformat(timespec="seconds")
     sub = [r for r in allr if r["ts"] <= cutoff_ts]
     pos, _ = replay(sub); cs = sum(r["cash_delta_myr"] for r in sub)
+    from . import portfolio
+    v2 = portfolio.usd_assets_asof(sub, d); cs += v2["cash_myr"]
     flows = sum(r["cash_delta_myr"] for r in allr if r["kind"] in ("DEPOSIT", "WITHDRAW") and myt_date(r["ts"]) == d)
     mv, stale, hold = 0.0, [], []
     for s, p in pos.items():
@@ -103,6 +109,7 @@ def state_asof(d, allr=None):
             px = float(df["close"].iloc[-1]); v = px * fx * p["qty"]
             if (pd.Timestamp(d) - df.index[-1]).days > 5: stale.append(s)
         mv += v; hold.append({"symbol": s, "qty": p["qty"], "cost_myr": round(p["cost_myr"], 4), "last_close": px, "value_myr": round(v, 4)})
+    mv += v2["positions_myr"]; stale += v2["stale"]
     return {"cash": cs, "positions_value": mv, "equity": cs + mv, "flows": flows, "stale": stale, "holdings": hold, "trades": [r for r in sub if myt_date(r["ts"]) == d and r["kind"] in ("BUY", "SELL")]}
 
 def rebuild_equity_curve(now=None):

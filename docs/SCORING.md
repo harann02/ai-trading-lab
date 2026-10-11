@@ -69,3 +69,12 @@ fresh data (final bar == last completed session; >=210 bars; sane OHLC) - FX ava
 entry trigger - symbol not manually blocked - not already held/pending - R:R (if target) - size >= 1 lot - entries not suspended (drawdown) - max positions - min cash - max exposure -
 execution quality (ADV >= RM1m, ATR% <= 8%) - then at fill time: market open, today's bar present, open not gapped >3% above plan or below stop, re-sized on live equity/cash.
 BUY decisions become *pending* orders; if auto-trade is OFF no order is created; manual-approval mode holds the order until approved.
+
+
+---
+# v2.0 addendum (US-only; algo `swing-2.0.0` / `meanrev-2.0.0`)
+* Weights are **25 / 20 / 20 / 15 / 10 / 10 = 100** (Momentum / Fundamental / Technical / RS-regime / Liquidity / Risk); `scoring.validate_weights()` raises if they do not sum to 100 or disagree with `W`. Tested.
+* Liquidity is now in **USD** (20d average dollar volume); the Bursa/MYR liquidity and lot-size rules are gone (whole shares unless `fractional_shares`).
+* v2 features added by `scoring.enrich`: SMA5/20/50/150/200, EMA12/26, RSI14 (Wilder), RSI2, MACD(12,26,9), ATR14, Bollinger(20,2), 52-week high/low proximity, relative strength vs **both SPY and QQQ** (63/126/252d), relative volume (vs prior 20d), breakout (close > prior 20d high) / pullback (above SMA50, within 1 ATR of EMA20) structure flags. Fundamentals come from yfinance when available (missing-data rule above).
+* Regime is computed from SPY only. Market-hours/lot/brokerage rules for Bursa were removed.
+* ATR trailing stop multiple default is 4.0 (v1.1 tuning; the 2.5 in the text above is the pre-v1.1 value). Position size is the USD formula in `docs/STRATEGIES.md`.

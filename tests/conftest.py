@@ -34,6 +34,7 @@ class FakeProvider:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("AITL_DB", str(tmp_path / "t.db"))
+    monkeypatch.setenv("AITL_LEGACY_BURSA", "1")      # legacy (v1) regression tests exercise the archived Bursa code path; v2 tests use env2
     db.init()
     db.set_settings({"watchlist": {"BURSA": ["AAA.KL", "BBB.KL", "CCC.KL"], "US": []}, "markets_enabled": ["BURSA"],
                      "benchmarks": {"BURSA": "^KLSE", "US": "SPY"}, "equity_benchmark": "^KLSE", "weekly_entries_only": False, "min_trade_value_myr": 0.0})

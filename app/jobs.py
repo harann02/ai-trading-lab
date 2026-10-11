@@ -1,36 +1,40 @@
-"""Scheduled job functions (importable by APScheduler's persistent job store)."""
+"""Scheduled job functions (importable by APScheduler's persistent job store). v2.0: US only; Bursa jobs no longer exist."""
 import traceback, json
 from datetime import datetime, timezone
-from . import db, engine, data, calendars as cal, reports, ledger
+from . import db, engine, config, calendars as cal, reports, ledger, trading, research
+from .providers.yf import YFinanceProvider
 
 _SCHED = None
 
-def _provider(): return data.YFProvider()
+def _provider(): return YFinanceProvider()
 
-def scan_market(market):
+def scan_market(market="US"):
     now = datetime.now(timezone.utc)
+    if market != "US": return                                   # Bursa retired in v2.0
     try:
         engine.ready()
-        if not cal.is_session_day(market, cal.last_completed_session(market, now)):
-            return
-        res = engine.scan(_provider(), now, market=market)
-        db.event("INFO", "scheduler", f"{market} scan job finished: {json.dumps(res.get('markets', {}).get(market, {}).get('counts'))}")
+        if not cal.is_session_day("US", cal.last_completed_session("US", now)): return
+        p = _provider(); res = trading.run_scan(p, now); trading.execute_pending(p, now, refresh=False)
+        try: research.generate_memos(p, now); research.daily_market_summary(now)
+        except Exception as e: db.event("WARN", "ai", f"research step failed: {e}")
+        db.event("INFO", "scheduler", f"US scan job finished: {json.dumps({k: v.get('counts') for k, v in res.get('strategies', {}).items() if isinstance(v, dict)})[:400]}")
     except Exception as e:
-        db.event("ERROR", "scheduler", f"{market} scan job failed: {e}\n{traceback.format_exc()[-600:]}")
+        db.event("ERROR", "scheduler", f"US scan job failed: {e}\n{traceback.format_exc()[-600:]}")
 
-def monitor(market):
+def monitor(market="US"):
     now = datetime.now(timezone.utc)
+    if market != "US": return
     try:
         engine.ready()
-        if not cal.is_open(market, now): return
-        log = engine.execute_pending(_provider(), now)
-        db.heartbeat(f"monitor_{market}", json.dumps(log)[:500])
+        if not cal.is_open("US", now): return
+        log = trading.execute_pending(_provider(), now)
+        db.heartbeat("monitor_US", json.dumps(log)[:500])
     except Exception as e:
-        db.event("ERROR", "scheduler", f"{market} monitor failed: {e}")
+        db.event("ERROR", "scheduler", f"US monitor failed: {e}")
 
 def weekly():
-    try: engine.ready(); reports.weekly_review(); db.event("INFO", "scheduler", "weekly review generated")
-    except Exception as e: db.event("ERROR", "scheduler", f"weekly review failed: {e}")
+    try: engine.ready(); research.weekly_strategy_report(); db.event("INFO", "scheduler", "weekly strategy report generated")
+    except Exception as e: db.event("ERROR", "scheduler", f"weekly report failed: {e}")
 
 def beat():
     info = {}

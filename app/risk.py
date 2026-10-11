@@ -62,3 +62,46 @@ def portfolio_checks(*, cfg, equity, cash, n_positions, exposure_after, cost_myr
     c.append(("max_exposure", exposure_after <= equity * cfg["max_exposure_pct"] / 100 + 1e-6,
               f"exposure after {exposure_after:.2f} vs max {equity*cfg['max_exposure_pct']/100:.2f}"))
     return c
+
+# ------------------------------------------------------------------ v2: USD-native US equity costs and sizing (v1 functions above are untouched)
+def us_fee_breakdown(side, value_usd, qty, cfg):
+    """Explicit regulatory/broker fees in USD. Default commission 0 (configurable). SEC fee + FINRA TAF apply to SELLS only."""
+    f = cfg["us_fees"]
+    comm = min(max(qty * f.get("commission_per_share", 0.0), f.get("commission_min", 0.0)), value_usd * f.get("commission_max_pct", 1.0) / 100) if (f.get("commission_per_share", 0) or f.get("commission_min", 0)) else 0.0
+    sec = value_usd * f.get("sec_fee_sell_pct", 0.0) / 100 if side == "SELL" else 0.0
+    taf = min(qty * f.get("finra_taf_per_share", 0.0), f.get("finra_taf_max", 1e9)) if side == "SELL" else 0.0
+    return {"commission": comm, "sec_fee": sec, "finra_taf": taf, "total": comm + sec + taf}
+
+def half_spread_bps(adv_usd, cfg):
+    """MODELLED half-spread by liquidity tier (we have no quote feed on the free stack; this is an assumption, labelled as such)."""
+    for lo, bps in cfg["spread_model"]["tiers"]:
+        if adv_usd is not None and adv_usd >= lo: return float(bps)
+    return float(cfg["spread_model"]["tiers"][-1][1])
+
+def exec_price(side, ref_price, adv_usd, cfg):
+    """Returns (fill_price, spread_per_share, slippage_per_share). Spread (half) + slippage move the price against us."""
+    hs = half_spread_bps(adv_usd, cfg) / 1e4; sl = cfg["slippage_bps"]["US"] / 1e4
+    sgn = 1 if side == "BUY" else -1
+    return ref_price * (1 + sgn * (hs + sl)), ref_price * hs, ref_price * sl
+
+def size_position_usd(*, equity_usd, usable_cash_usd, price, stop, cfg, adv_usd=None, sleeve_equity_usd=None, sleeve_exposure_usd=0.0, total_exposure_usd=0.0):
+    """qty = floor(risk budget / (entry-stop + exit friction)), then capped by affordability (SETTLED usable cash after reserve), single-stock %, sleeve exposure,
+    liquidity (ADV %). Whole shares unless cfg['fractional_shares']. Returns dict(qty, binding, detail). All values USD."""
+    fill, _, _ = exec_price("BUY", price, adv_usd, cfg); sfill, _, _ = exec_price("SELL", stop, adv_usd, cfg)
+    f_in = us_fee_breakdown("BUY", fill * 100, 100, cfg)["total"] / 100; f_out = us_fee_breakdown("SELL", sfill * 100, 100, cfg)["total"] / 100
+    loss_ps = (fill - sfill) + f_in + f_out                   # entry-stop plus exit friction (spread/slippage on the exit fill and fees both sides)
+    if price <= 0 or stop >= price or loss_ps <= 0: return {"qty": 0, "binding": "invalid_stop", "detail": {}}
+    sleeve_eq = sleeve_equity_usd if sleeve_equity_usd is not None else equity_usd
+    budget = equity_usd * cfg["risk_per_trade_pct"] / 100
+    frac = bool(cfg.get("fractional_shares"))
+    fl = (lambda x: math.floor(x * 1e4 + 1e-9) / 1e4) if frac else (lambda x: math.floor(x + 1e-9))
+    unit = fill + f_in
+    caps = {"risk": fl(budget / loss_ps),
+            "affordability": fl(max(0.0, usable_cash_usd) / unit),
+            "single_stock_pct": fl(equity_usd * cfg["max_position_pct"] / 100 / unit),
+            "sleeve_exposure": fl(max(0.0, sleeve_eq * cfg["max_exposure_pct"] / 100 - sleeve_exposure_usd) / unit)}
+    if adv_usd and adv_usd > 0: caps["liquidity"] = fl(adv_usd * cfg["max_adv_pct"] / 100 / fill)
+    caps = {k: max(0, v) for k, v in caps.items()}
+    q = min(caps.values()); binding = min(caps, key=caps.get)
+    return {"qty": q, "binding": binding if q > 0 else (binding if min(caps.values()) <= 0 else "none"),
+            "detail": {"risk_budget_usd": budget, "loss_per_share_usd": loss_ps, "caps": caps, "fill_price_usd": fill, "fractional": frac}}

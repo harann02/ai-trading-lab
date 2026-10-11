@@ -49,7 +49,16 @@ def conn() -> sqlite3.Connection:
     return c
 
 def init():
+    from . import migrations
     c = conn(); c.executescript(SCHEMA); c.commit(); c.close()
+    migrations.apply_all(config.db_path())
+
+def audit(action, detail, actor="system", source="engine", ts=None):
+    from datetime import datetime, timezone
+    c = conn()
+    c.execute("INSERT INTO audit_log(ts,actor,action,detail,source) VALUES(?,?,?,?,?)",
+              (ts or datetime.now(timezone.utc).isoformat(timespec="seconds"), actor, action, json.dumps(detail, default=str) if not isinstance(detail, str) else detail, source))
+    c.commit(); c.close()
 
 def get_settings() -> dict:
     c = conn()

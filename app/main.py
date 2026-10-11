@@ -1,367 +1,205 @@
-"""FastAPI backend + static dashboard. No secrets are served to the browser; binds to 127.0.0.1 by default."""
-import asyncio, csv, io, json, os, shutil, threading, time
-from datetime import datetime, timezone, timedelta
+"""FastAPI backend (self-hosting) for AI Trading Lab v2.0: US-only paper trading. Same dashboard as the GitHub Pages site (served from site_src + live JSON export).
+Security: HTTP Basic on EVERY route (fails closed 503 without DASH_USER/DASH_PASS), CSRF guard (state-changing requests must carry X-Requested-With: ailab and same-origin Origin),
+rate limiting (per-IP token bucket), validated settings (same schema as the control plane), structured JSON logging, /healthz + /readyz, backup/restore of the SQLite ledger.
+No secrets are ever returned by any endpoint."""
+import base64, json, logging, os, secrets, shutil, sqlite3, subprocess, sys, threading, time
+from collections import defaultdict, deque
+from datetime import datetime, timezone
 from pathlib import Path
-import pandas as pd
-from fastapi import FastAPI, HTTPException, Query, Body
-from fastapi.responses import StreamingResponse, JSONResponse, Response, FileResponse
-from fastapi.staticfiles import StaticFiles
-from . import config, db, engine, ledger, data, perf, reports, scoring, calendars as cal, backtest, indicators as ind
-
-app = FastAPI(title="AI Trading Lab (paper trading only)")
-STATIC = Path(__file__).parent / "static"
-_lock = threading.Lock(); _jobs = {"scan": None, "backtest": None}
-
-# ------------------------------------------------------------ authentication (HTTP Basic, credentials from env/.env)
-import base64, secrets
+from fastapi import FastAPI, HTTPException, Body, Request, UploadFile, File
+from fastapi.responses import Response, FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from . import config, db, engine, ledger, data, views, control, trading, research, settings_schema, calendars as cal, portfolio
 
-class BasicAuthMiddleware(BaseHTTPMiddleware):
-    """Every route (dashboard, /static, /api) requires HTTP Basic. Fails CLOSED (503) if DASH_USER/DASH_PASS are not configured,
-    unless AITL_AUTH_DISABLED=1 is set explicitly (local dev only)."""
+ROOT = Path(__file__).resolve().parent.parent
+LIVE = Path(os.environ.get("AITL_LIVE_DIR", ROOT / "site_live"))
+app = FastAPI(title="AI Trading Lab v2 (paper trading only)", docs_url="/api/docs", openapi_url="/api/openapi.json")
+_lock = threading.Lock(); _jobs = {"scan": None, "export": None}
+
+class JsonFmt(logging.Formatter):
+    def format(self, r): return json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "level": r.levelname, "logger": r.name, "msg": r.getMessage()})
+log = logging.getLogger("ailab"); _h = logging.StreamHandler(); _h.setFormatter(JsonFmt()); log.addHandler(_h); log.setLevel(logging.INFO)
+
+_buckets = defaultdict(lambda: deque())
+RATE = int(os.environ.get("AITL_RATE_PER_MIN", "120")); RATE_WRITE = int(os.environ.get("AITL_RATE_WRITE_PER_MIN", "20"))
+SAFE = ("GET", "HEAD", "OPTIONS")
+
+class Guard(BaseHTTPMiddleware):
+    """Auth (fail closed) -> rate limit -> CSRF for mutations -> structured access log."""
     async def dispatch(self, request, call_next):
-        if os.environ.get("AITL_AUTH_DISABLED") == "1": return await call_next(request)
-        u, p = os.environ.get("DASH_USER", ""), os.environ.get("DASH_PASS", "")
-        if not u or not p: return Response("auth not configured (set DASH_USER/DASH_PASS)", status_code=503)
-        ok = False
-        h = request.headers.get("authorization", "")
-        if h.lower().startswith("basic "):
-            try:
-                gu, _, gp = base64.b64decode(h[6:]).decode("utf-8").partition(":")
-                ok = secrets.compare_digest(gu.encode(), u.encode()) & secrets.compare_digest(gp.encode(), p.encode())
-            except Exception: ok = False
-        if not ok: return Response("authentication required", status_code=401, headers={"WWW-Authenticate": 'Basic realm="AI Trading Lab", charset="UTF-8"'})
-        return await call_next(request)
-
-app.add_middleware(BasicAuthMiddleware)
+        path = request.url.path
+        if path in ("/healthz",): return await call_next(request)          # liveness only, reveals nothing
+        if os.environ.get("AITL_AUTH_DISABLED") != "1":
+            u, p = os.environ.get("DASH_USER", ""), os.environ.get("DASH_PASS", "")
+            if not u or not p: return Response("auth not configured (set DASH_USER/DASH_PASS)", status_code=503)
+            ok = False; h = request.headers.get("authorization", "")
+            if h.lower().startswith("basic "):
+                try:
+                    gu, _, gp = base64.b64decode(h[6:]).decode("utf-8").partition(":")
+                    ok = secrets.compare_digest(gu.encode(), u.encode()) & secrets.compare_digest(gp.encode(), p.encode())
+                except Exception: ok = False
+            if not ok:
+                log.warning(f"auth failed {request.method} {path} from {request.client.host if request.client else '?'}")
+                return Response("authentication required", status_code=401, headers={"WWW-Authenticate": 'Basic realm="AI Trading Lab", charset="UTF-8"'})
+        ip = request.client.host if request.client else "?"; now = time.time(); q = _buckets[(ip, request.method not in SAFE)]; lim = RATE if request.method in SAFE else RATE_WRITE
+        while q and now - q[0] > 60: q.popleft()
+        if len(q) >= lim: return Response("rate limit exceeded", status_code=429, headers={"Retry-After": "30"})
+        q.append(now)
+        if request.method not in SAFE:
+            if request.headers.get("x-requested-with") != "ailab": return Response("CSRF: missing X-Requested-With header", status_code=403)
+            org = request.headers.get("origin")
+            if org and org.split("://", 1)[-1] != request.headers.get("host", ""): return Response("CSRF: cross-origin request refused", status_code=403)
+        t0 = time.time(); resp = await call_next(request)
+        log.info(f"{request.method} {path} {resp.status_code} {int((time.time()-t0)*1000)}ms"); return resp
+app.add_middleware(Guard)
 
 @app.on_event("startup")
-def _start(): engine.ready()
+def _start():
+    engine.ready()
 
 def now(): return datetime.now(timezone.utc)
-
 def live_provider(): return data.YFProvider()
 
-# ------------------------------------------------------------ status
+def _regen():
+    """Regenerate the live JSON snapshot the dashboard reads (same exporter as the Pages workflow)."""
+    def run():
+        with _lock:
+            subprocess.run([sys.executable, str(ROOT / "export_static.py"), str(LIVE)], cwd=ROOT, capture_output=True, env={**os.environ, "AITL_TRIGGER": "self-hosted"})
+    if _jobs["export"] and _jobs["export"].is_alive(): return
+    t = threading.Thread(target=run, daemon=True); t.start(); _jobs["export"] = t
+
+# ------------------------------------------------------------ health / status
+@app.get("/healthz")
+def healthz(): return {"ok": True}
+
+@app.get("/readyz")
+def readyz():
+    try:
+        c = db.conn(); n = c.execute("SELECT COUNT(*) n FROM ledger").fetchone()["n"]; v = c.execute("PRAGMA user_version").fetchone()[0]; c.close(); return {"ok": True, "ledger_rows": n}
+    except Exception as e: raise HTTPException(503, f"db not ready: {e}")
+
 def _scheduler_health():
     c = db.conn(); r = c.execute("SELECT ts,info FROM heartbeat WHERE name='scheduler'").fetchone(); c.close()
     if not r: return {"healthy": False, "detail": "scheduler process never started", "next_runs": {}}
     age = (now() - datetime.fromisoformat(r["ts"])).total_seconds()
-    return {"healthy": age < 120, "last_heartbeat": r["ts"], "age_s": round(age), "next_runs": json.loads(r["info"] or "{}"),
-            "detail": "ok" if age < 120 else f"no heartbeat for {int(age)}s - scheduler process is DOWN"}
-
-def _data_mode():
-    c = db.conn(); n = c.execute("SELECT COUNT(*) n FROM bars WHERE final=1").fetchone()["n"]; c.close()
-    if n == 0: return "DEMO"
-    return "LIVE"
+    return {"healthy": age < 120, "last_heartbeat": r["ts"], "age_s": round(age), "next_runs": json.loads(r["info"] or "{}"), "detail": "ok" if age < 120 else f"no heartbeat for {int(age)}s - scheduler DOWN"}
 
 @app.get("/api/status")
 def status():
-    cfg = db.get_settings(); c = db.conn()
-    src = [dict(r) for r in c.execute("SELECT * FROM source_status")]
-    ls = c.execute("SELECT ts FROM heartbeat WHERE name='last_scan'").fetchone(); c.close()
-    mode = _data_mode(); sch = _scheduler_health()
-    return {"now_utc": now().isoformat(timespec="seconds"), "now_myt": now().astimezone(ledger.MYT).strftime("%Y-%m-%d %H:%M:%S MYT"),
-            "data_mode": mode, "data_label": data.DATA_LABEL,
-            "banner": ("DEMO MODE: no live market data loaded - anything shown is synthetic and trading is disabled" if mode == "DEMO" else None),
-            "markets": [cal.market_status(m) for m in cal.MARKETS], "fx": data.get_fx(now()), "sources": src, "scheduler": sch,
-            "last_scan": ls["ts"] if ls else None, "scan_running": bool(_jobs["scan"] and _jobs["scan"].is_alive()),
-            "entries_suspended": cfg["entries_suspended"], "suspend_reason": cfg["suspend_reason"], "auto_trade": cfg["auto_trade"],
-            "manual_approval": cfg["manual_approval"], "algo_version": config.ALGO_VERSION, "paper_only": True}
+    cfg = db.get_settings(); c = db.conn(); src = [dict(r) for r in c.execute("SELECT * FROM source_status")]; ls = c.execute("SELECT ts FROM heartbeat WHERE name='last_scan'").fetchone(); c.close()
+    return {"now_utc": now().isoformat(timespec="seconds"), "now_myt": now().astimezone(ledger.MYT).strftime("%Y-%m-%d %H:%M:%S MYT"), "platform_version": config.PLATFORM_VERSION, "data_label": data.DATA_LABEL,
+            "us_market": cal.us_status(now()), "sources": src, "scheduler": _scheduler_health(), "last_scan": ls["ts"] if ls else None, "scan_running": bool(_jobs["scan"] and _jobs["scan"].is_alive()),
+            "entries_suspended": cfg["entries_suspended"], "suspend_reason": cfg["suspend_reason"], "automation_on": cfg["automation_on"], "manual_approval": cfg["manual_approval"], "paper_only": True}
 
-# ------------------------------------------------------------ KPIs / equity
-def _principal():
-    r = ledger.rows(); return sum(x["cash_delta_myr"] for x in r if x["kind"] in ("DEPOSIT", "WITHDRAW")), (r[0]["cash_delta_myr"] if r else 0)
-
+# ------------------------------------------------------------ read API (JSON views shared with the static export)
 @app.get("/api/kpis")
-def kpis():
-    eq = ledger.equity_now(now()); net, start = _principal(); df = perf.curve_df()
-    today = now().astimezone(ledger.MYT).date(); prev = df[df.index < pd.Timestamp(today)]
-    flows_today = float(df[df.index >= pd.Timestamp(today)]["flows"].sum()) if len(df) else 0.0
-    day = eq["equity"] - float(prev["equity"].iloc[-1]) - flows_today if len(prev) else 0.0
-    mdd = perf.max_drawdown(perf.nav_series(df)) * 100 if len(df) > 1 else 0.0
-    return {"starting_capital": start, "net_contributions": net, "equity": eq["equity"], "cash": eq["cash"], "positions_value": eq["positions_value"],
-            "total_pnl": eq["equity"] - net, "todays_pnl": day, "return_pct": (eq["equity"] / net - 1) * 100 if net else 0, "max_drawdown_pct": mdd,
-            "exposure_pct": eq["exposure_pct"], "stale_symbols": eq["stale"], "label": "FORWARD PAPER"}
-
-def _bench_series(sym):
-    df = data.load_bars(sym, include_partial=False)
-    return df["close"] if len(df) else pd.Series(dtype=float)
-
+def kpis(): return views.kpis(db.get_settings(), now())
 @app.get("/api/equity")
-def equity(range: str = "ALL"):
-    df = perf.curve_df()
-    if len(df) == 0: return {"equity": [], "benchmark": [], "drawdown": []}
-    eq = ledger.equity_now(now()); today = pd.Timestamp(now().astimezone(ledger.MYT).date())
-    if df.index[-1] < today: df.loc[today] = [eq["equity"], eq["cash"], eq["positions_value"], 0.0, "", None]
-    last = df.index[-1]
-    cut = {"1D": 1, "1W": 7, "1M": 30, "3M": 91}.get(range)
-    if range == "YTD": df = df[df.index >= pd.Timestamp(last.year, 1, 1)]
-    elif cut: df = df[df.index >= last - pd.Timedelta(days=cut)]
-    nav = perf.nav_series(df); dd = (nav / nav.cummax() - 1) * 100
-    b = _bench_series(db.get_settings()["equity_benchmark"]); bs = []
-    if len(b) and len(df):
-        bb = b.reindex(df.index, method="ffill").dropna()
-        if len(bb): bs = [{"time": str(i.date()), "value": float(v / bb.iloc[0] * df["equity"].iloc[0])} for i, v in bb.items()]
-    return {"equity": [{"time": str(i.date()), "value": float(v)} for i, v in df["equity"].items()], "benchmark": bs,
-            "benchmark_symbol": db.get_settings()["equity_benchmark"], "benchmark_note": "benchmark rebased to first equity point (price index, local currency)",
-            "drawdown": [{"time": str(i.date()), "value": float(v)} for i, v in dd.items()]}
-
-# ------------------------------------------------------------ holdings / discovery
-def _latest_decisions(market=None):
-    c = db.conn()
-    q = "SELECT d.* FROM decisions d JOIN (SELECT symbol, MAX(id) mid FROM decisions WHERE data_mode='LIVE' GROUP BY symbol) m ON d.id=m.mid"
-    rows = [dict(r) for r in c.execute(q + (" WHERE d.market=?" if market else ""), (market,) if market else ())]; c.close(); return rows
-
+def equity(): return views.equity_curves(db.get_settings())
 @app.get("/api/holdings")
-def holdings():
-    h = ledger.mark_positions(now()); c = db.conn(); out = []
-    dec = {d["symbol"]: d for d in _latest_decisions()}
-    for p in h:
-        ps = c.execute("SELECT * FROM position_state WHERE symbol=?", (p["symbol"],)).fetchone()
-        pend = c.execute("SELECT reason FROM orders WHERE symbol=? AND side='SELL' AND status='pending'", (p["symbol"],)).fetchone()
-        out.append({**{k: p[k] for k in ("symbol", "market", "qty", "last_price", "last_bar", "fx", "market_value_myr", "unrealized_pnl_myr", "unrealized_pct", "data_flag")},
-                    "avg_cost_myr": p["cost_myr"] / p["qty"], "cost_myr": p["cost_myr"], "stop": ps["stop"] if ps else None, "target": ps["target"] if ps else None,
-                    "ai_score": dec.get(p["symbol"], {}).get("score"), "action": ("EXIT pending: " + pend["reason"]) if pend else ("HOLD (trailing stop)" if ps else "HOLD (no stop state!)")})
-    c.close(); return out
-
-@app.get("/api/discovery")
-def discovery(market: str | None = None):
-    out = []
-    for d in _latest_decisions(market):
-        plan = json.loads(d["plan"]) if d["plan"] else None; chk = json.loads(d["checks"]) if d["checks"] else []
-        out.append({"id": d["id"], "symbol": d["symbol"], "market": d["market"], "scan_date": d["scan_date"], "score": d["score"], "band": d["band"], "decision": d["decision"],
-                    "entry": plan and plan["entry"], "stop": plan and plan["stop"], "target": plan and plan["target"], "rr": plan and plan.get("rr"), "qty": plan and plan["qty"],
-                    "failed": [k["name"] for k in chk if not k["pass"]]})
-    out.sort(key=lambda x: (-(x["score"] if x["score"] is not None else -1)))
-    return out
-
-@app.get("/api/decision/{ref}")
-def decision(ref: str):
-    c = db.conn()
-    r = c.execute("SELECT * FROM decisions WHERE id=?", (int(ref),)).fetchone() if ref.isdigit() else \
-        c.execute("SELECT * FROM decisions WHERE symbol=? ORDER BY id DESC LIMIT 1", (ref,)).fetchone()
-    if not r: raise HTTPException(404, "no decision")
-    d = dict(r)
-    for k in ("snapshot", "scores", "checks", "plan"): d[k] = json.loads(d[k]) if d[k] else None
-    m = c.execute("SELECT text,ts FROM memos WHERE decision_id=?", (d["id"],)).fetchone(); d["memo"] = dict(m) if m else None
-    o = c.execute("SELECT * FROM orders WHERE decision_id=?", (d["id"],)).fetchone(); d["order"] = dict(o) if o else None
-    c.close(); return d
-
-# ------------------------------------------------------------ charts
-@app.get("/api/candles/{symbol}")
-def candles(symbol: str, bars: int = 260):
-    df = data.load_bars(symbol, include_partial=True); demo = False
-    if len(df) == 0:
-        if _data_mode() == "DEMO":
-            df = data.DemoProvider().daily([symbol])[symbol]; df["final"] = 1; demo = True
-        else: raise HTTPException(404, f"no data for {symbol} (not collected yet)")
-    bench = _bench_series(db.get_settings()["benchmarks"][cal.market_of(symbol)])
-    f = scoring.feature_frame(df, bench if len(bench) else None).tail(bars)
-    T = lambda i: str(i.date())
-    ser = lambda col: [{"time": T(i), "value": float(v)} for i, v in f[col].items() if pd.notna(v)]
-    rows = [r for r in ledger.rows() if r["symbol"] == symbol]
-    markers = [{"time": T(pd.Timestamp(ledger.myt_date(r["ts"]))), "position": "belowBar" if r["kind"] == "BUY" else "aboveBar", "color": "#26a69a" if r["kind"] == "BUY" else "#ef5350",
-                "shape": "arrowUp" if r["kind"] == "BUY" else "arrowDown", "text": f"{r['kind']} {r['qty']}@{r['price_local']:.3f}"} for r in rows]
-    c = db.conn(); ps = c.execute("SELECT * FROM position_state WHERE symbol=?", (symbol,)).fetchone(); c.close()
-    st = data.data_status(symbol, now())
-    return {"symbol": symbol, "demo": demo, "status": st, "label": ("DEMO SYNTHETIC DATA" if demo else data.DATA_LABEL),
-            "candles": [{"time": T(i), "open": float(r.open), "high": float(r.high), "low": float(r.low), "close": float(r.close)} for i, r in f.iterrows()],
-            "volume": [{"time": T(i), "value": float(r.volume), "color": "#26a69a55" if r.close >= r.open else "#ef535055"} for i, r in f.iterrows()],
-            "sma20": ser("sma20"), "sma50": ser("sma50"), "sma200": ser("sma200"), "ema20": ser("ema20"), "rsi": ser("rsi14"), "macd": ser("macd"), "macd_sig": ser("macd_sig"),
-            "macd_hist": [{"time": T(i), "value": float(v), "color": "#26a69a" if v >= 0 else "#ef5350"} for i, v in f["macd_hist"].items() if pd.notna(v)],
-            "markers": markers, "stop": ps["stop"] if ps else None, "target": ps["target"] if ps else None}
-
-# ------------------------------------------------------------ ledger / export
-def _ledger_rows():
-    out = []
-    for r in ledger.rows():
-        r = dict(r); r["ts_myt"] = datetime.fromisoformat(r["ts"]).astimezone(ledger.MYT).strftime("%Y-%m-%d %H:%M:%S"); out.append(r)
-    return out
-
+def holdings(): return views.holdings(db.get_settings())
+@app.get("/api/orders")
+def orders(): return views.orders()
 @app.get("/api/ledger")
-def ledger_api(): return list(reversed(_ledger_rows()))
+def ledger_api(): return views.ledger_rows()
+@app.get("/api/fx")
+def fx_api(): return {"conversions": views.fx_conversions(), "current": views.fx_status(db.get_settings())}
+@app.get("/api/discovery")
+def discovery(): return views.discovery()
+@app.get("/api/universe")
+def universe_api(): return views.universe_summary()
+@app.get("/api/strategies")
+def strategies(): return views.strategies_view(db.get_settings())
+@app.get("/api/monitor")
+def monitor_api(): return views.monitor_view()
+@app.get("/api/feed")
+def feed(limit: int = 60): return views.feed(min(limit, 300))
+@app.get("/api/candles/{symbol}")
+def candles(symbol: str): return views.candles(symbol.upper()) or {}
+@app.get("/api/decision/{symbol}")
+def decision(symbol: str): return views.decision_for(symbol.upper())
+@app.get("/api/control/status")
+def control_status(): return control.status()
 
-COLS = ["id", "ts_myt", "kind", "symbol", "market", "qty", "price_local", "ccy", "fx", "gross_myr", "fees_myr", "slippage_myr", "cash_delta_myr", "realized_pnl_myr", "order_id", "note"]
+@app.get("/api/settings")
+def get_settings():
+    cfg = db.get_settings(); return {k: cfg[k] for k in settings_schema.SCHEMA if k in cfg}
 
 @app.get("/api/export/ledger.csv")
 def export_csv():
-    s = io.StringIO(); w = csv.writer(s); w.writerow(COLS)
-    for r in _ledger_rows(): w.writerow([r.get(k) for k in COLS])
-    return Response(s.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=ai_trading_lab_ledger.csv"})
+    import csv, io
+    led = views.ledger_rows(100000); s = io.StringIO(); cols = list(led[0].keys()) if led else ["id"]; w = csv.writer(s); w.writerow(cols); [w.writerow([r.get(c) for c in cols]) for r in led]
+    return Response(s.getvalue(), media_type="text/csv")
 
-@app.get("/api/export/ledger.xlsx")
-def export_xlsx():
-    from openpyxl import Workbook
-    wb = Workbook(); ws = wb.active; ws.title = "Ledger"; ws.append(COLS)
-    for r in _ledger_rows(): ws.append([r.get(k) for k in COLS])
-    ws2 = wb.create_sheet("Orders"); c = db.conn(); rs = c.execute("SELECT * FROM orders ORDER BY id").fetchall(); c.close()
-    if rs: ws2.append(list(rs[0].keys())); [ws2.append(list(r)) for r in rs]
-    ws3 = wb.create_sheet("Holdings"); h = holdings(); ws3.append(["symbol", "qty", "avg_cost_myr", "last_price", "market_value_myr", "unrealized_pnl_myr", "stop", "ai_score"])
-    for x in h: ws3.append([x[k] for k in ["symbol", "qty", "avg_cost_myr", "last_price", "market_value_myr", "unrealized_pnl_myr", "stop", "ai_score"]])
-    ws4 = wb.create_sheet("Performance"); [ws4.append([k, json.dumps(v) if isinstance(v, (dict, list)) else v]) for k, v in perf.metrics().items()]
-    b = io.BytesIO(); wb.save(b)
-    return Response(b.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=ai_trading_lab.xlsx"})
-
-@app.get("/api/orders")
-def orders():
-    c = db.conn(); r = [dict(x) for x in c.execute("SELECT * FROM orders ORDER BY id DESC LIMIT 200")]; c.close(); return r
-
-# ------------------------------------------------------------ analytics
-@app.get("/api/performance")
-def performance(): return perf.metrics()
-
-@app.get("/api/analytics")
-def analytics():
-    rws = ledger.rows(); pos, trades = ledger.replay(rws); eq = ledger.equity_now(now())
-    by = {}
-    for t in trades: by[t["symbol"]] = by.get(t["symbol"], 0) + t["pnl_myr"]
-    for h in eq["holdings"]: by[h["symbol"]] = by.get(h["symbol"], 0) + h["unrealized_pnl_myr"]
-    alloc = [{"name": "CASH", "value": eq["cash"]}] + [{"name": h["symbol"], "value": h["market_value_myr"]} for h in eq["holdings"]]
-    cum_f = cum_s = 0; fs = []
-    for r in rws:
-        if r["kind"] in ("BUY", "SELL"):
-            cum_f += r["fees_myr"] or 0; cum_s += r["slippage_myr"] or 0; fs.append({"time": ledger.myt_date(r["ts"]).isoformat(), "fees": cum_f, "slippage": cum_s})
-    return {"monthly": perf.periodic_returns("M"), "weekly": perf.periodic_returns("W"),
-            "win_loss": {"wins": len([t for t in trades if t["pnl_myr"] > 0]), "losses": len([t for t in trades if t["pnl_myr"] <= 0])},
-            "profit_by_symbol": [{"name": k, "value": v} for k, v in sorted(by.items(), key=lambda x: -x[1])], "allocation": alloc, "fees_slippage": fs}
-
-# ------------------------------------------------------------ feed / SSE
-@app.get("/api/feed")
-def feed(after: int = 0, limit: int = 100):
-    c = db.conn(); r = [dict(x) for x in c.execute("SELECT * FROM events WHERE id>? ORDER BY id DESC LIMIT ?", (after, limit))]; c.close(); return list(reversed(r))
-
-@app.get("/api/stream")
-async def stream(after: int = 0):
-    """Server-sent events: new activity rows + periodic status ticks. Frontend falls back to polling /api/feed on error."""
-    async def gen():
-        last = after; i = 0
-        yield "retry: 5000\n\n"
-        while True:
-            for ev in feed(last, 50): last = max(last, ev["id"]); yield f"event: activity\ndata: {json.dumps(ev)}\n\n"
-            if i % 5 == 0: yield f"event: tick\ndata: {json.dumps({'now': now().isoformat(timespec='seconds')})}\n\n"
-            i += 1; await asyncio.sleep(3)
-    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-@app.get("/api/reports/{kind}")
-def get_report(kind: str):
-    c = db.conn(); r = c.execute("SELECT body FROM reports WHERE kind=? ORDER BY period DESC LIMIT 1", (kind,)).fetchone(); c.close()
-    if kind == "daily" and not r: return reports.daily_report(now(), store=False)
-    if not r: raise HTTPException(404, "none yet")
-    return json.loads(r["body"])
-
-# ------------------------------------------------------------ actions
-def _run_scan(market):
-    with _lock:
-        try: engine.scan(live_provider(), now(), market=market)
-        except Exception as e: db.event("ERROR", "scan", f"manual scan failed: {e}")
+# ------------------------------------------------------------ write API (CSRF + rate limited + validated + audited)
+@app.put("/api/settings")
+def put_settings(body: dict = Body(...)):
+    r = control.apply_settings(body, actor="api-owner", source="api")
+    if not r["ok"]: raise HTTPException(400, "; ".join(map(str, r["errors"])) if isinstance(r["errors"], list) else str(r["errors"]))
+    _regen(); return get_settings()
 
 @app.post("/api/scan")
-def scan(market: str | None = None):
+def scan():
     if _jobs["scan"] and _jobs["scan"].is_alive(): raise HTTPException(409, "scan already running")
-    t = threading.Thread(target=_run_scan, args=(market,), daemon=True); t.start(); _jobs["scan"] = t
-    return {"started": True, "market": market or "all enabled"}
+    def run():
+        with _lock:
+            try: trading.run_scan(live_provider(), now()); trading.execute_pending(live_provider(), now()); research.generate_memos(live_provider(), now())
+            except Exception as e: db.event("ERROR", "scan", f"manual scan failed: {e}")
+        _regen()
+    t = threading.Thread(target=run, daemon=True); t.start(); _jobs["scan"] = t; return {"started": True}
 
 @app.post("/api/monitor")
-def monitor():
-    return {"log": engine.execute_pending(live_provider(), now())}
+def monitor_run():
+    with _lock: out = trading.execute_pending(live_provider(), now())
+    _regen(); return {"log": out}
 
 @app.post("/api/orders/{oid}/approve")
-def approve(oid: int): engine.approve_order(oid); return {"ok": True}
-
+def approve(oid: int):
+    r = control._cmd({"type": "approve_order", "order_id": oid}, now()); _regen(); return {"ok": True, "result": r}
 @app.post("/api/orders/{oid}/cancel")
-def cancel(oid: int): engine.cancel_order(oid); return {"ok": True}
-
+def cancel(oid: int):
+    r = control._cmd({"type": "cancel_order", "order_id": oid}, now()); _regen(); return {"ok": True, "result": r}
 @app.post("/api/resume")
 def resume(body: dict = Body(...)):
     if body.get("confirm") != "RESUME": raise HTTPException(400, "confirm must equal 'RESUME'")
-    engine.resume_entries(); return {"ok": True}
-
-@app.get("/api/settings")
-def get_settings(): return db.get_settings()
-
-@app.put("/api/settings")
-def put_settings(body: dict = Body(...)):
-    cur = db.get_settings(); clean = {}
-    for k, v in body.items():
-        if k not in config.DEFAULTS: raise HTTPException(400, f"unknown setting {k}")
-        if k in ("entries_suspended", "suspend_reason", "dd_baseline_ts"): raise HTTPException(400, f"{k} is controlled by the risk engine (use /api/resume)")
-        if type(v) != type(cur[k]) and not (isinstance(v, (int, float)) and isinstance(cur[k], (int, float)) and not isinstance(v, bool)): raise HTTPException(400, f"bad type for {k}")
-        clean[k] = v
-    for k in ("risk_per_trade_pct", "max_position_pct", "max_exposure_pct", "min_cash_pct", "max_drawdown_pct"):
-        if k in clean and not (0 < clean[k] <= 100): raise HTTPException(400, f"{k} must be in (0,100]")
-    if "risk_per_trade_pct" in clean and clean["risk_per_trade_pct"] > 5: raise HTTPException(400, "risk_per_trade_pct capped at 5 in this paper system")
-    db.set_settings(clean); return db.get_settings()
-
-@app.post("/api/cash")
-def cash(body: dict = Body(...)):
-    kind = body.get("kind", "").upper(); amt = float(body.get("amount", 0))
-    if kind not in ("DEPOSIT", "WITHDRAW") or amt <= 0: raise HTTPException(400, "kind DEPOSIT|WITHDRAW and positive amount required")
-    try: ledger.cash_flow(kind, amt, now(), body.get("note", "manual (virtual)"))
-    except ValueError as e: raise HTTPException(400, str(e))
-    engine.reconcile(now()); return kpis()
-
-@app.post("/api/override")
-def override(body: dict = Body(...)):
-    act, sym = body.get("action"), body.get("symbol", "").upper(); cfg = db.get_settings()
-    if act == "block":
-        db.set_settings({"blocked_symbols": sorted(set(cfg["blocked_symbols"]) | {sym})})
-    elif act == "unblock":
-        db.set_settings({"blocked_symbols": [s for s in cfg["blocked_symbols"] if s != sym]})
-    elif act == "close":
-        try: return {"order_id": engine.manual_close(sym, now()), "note": "SELL pending; fills at next session open"}
-        except ValueError as e: raise HTTPException(400, str(e))
-    elif act == "raise_stop":
-        c = db.conn(); ps = c.execute("SELECT stop FROM position_state WHERE symbol=?", (sym,)).fetchone()
-        new = float(body["stop"])
-        if not ps or new <= ps["stop"]: raise HTTPException(400, "stops may only be raised")
-        c.execute("UPDATE position_state SET stop=? WHERE symbol=?", (new, sym)); c.commit(); c.close()
-    else: raise HTTPException(400, "unknown action")
-    db.event("WARN", "override", f"manual override {act} {sym}"); return {"ok": True}
-
+    r = control._cmd({"type": "resume_entries"}, now()); _regen(); return {"ok": True, "result": r}
 @app.post("/api/reset")
 def reset(body: dict = Body(...)):
-    if body.get("confirm") != "RESET": raise HTTPException(400, "confirm must equal 'RESET'")
-    p = Path(config.db_path()); arch = p.parent / "archive"; arch.mkdir(exist_ok=True)
-    stamp = now().strftime("%Y%m%d-%H%M%S"); keep = db.get_settings()
-    for suf in ("", "-wal", "-shm"):
-        f = Path(str(p) + suf)
-        if f.exists(): shutil.move(str(f), str(arch / f"{p.stem}-{stamp}.db{suf[1:] and '-' + suf[1:]}"))
-    db.init(); db.set_settings({k: v for k, v in keep.items() if k not in ("entries_suspended", "suspend_reason", "dd_baseline_ts")})
-    if body.get("capital"): db.set_settings({"starting_capital": float(body["capital"])})
-    ledger.init_account(); db.event("WARN", "reset", f"FULL RESET performed; old database archived as archive/{p.stem}-{stamp}.db")
-    return {"ok": True, "archived": f"archive/{p.stem}-{stamp}.db"}
+    if body.get("confirm") != "RESET MY ACCOUNT": raise HTTPException(400, "type 'RESET MY ACCOUNT' to confirm")
+    r = control.reset_account(now()); _regen(); return {"ok": True, "result": r}
 
-@app.get("/api/export/settings")
-def export_settings(): return db.get_settings()
+# ------------------------------------------------------------ backup / restore (SQLite online backup; restore validates the file)
+@app.get("/api/backup")
+def backup():
+    dst = Path(config.db_path()).with_suffix(".backup.db")
+    src = db.conn(); out = sqlite3.connect(dst); src.backup(out); out.close(); src.close()
+    return FileResponse(dst, filename=f"ailab-backup-{now():%Y%m%d-%H%M}.db", media_type="application/octet-stream")
 
-@app.post("/api/import/settings")
-def import_settings(body: dict = Body(...)):
-    body = {k: v for k, v in body.items() if k not in ("entries_suspended", "suspend_reason", "dd_baseline_ts")}
-    try: db.set_settings(body)
-    except KeyError as e: raise HTTPException(400, str(e))
-    return db.get_settings()
-
-@app.get("/api/backtest")
-def backtest_latest():
-    c = db.conn(); r = c.execute("SELECT result FROM backtests ORDER BY id DESC LIMIT 1").fetchone(); c.close()
-    running = bool(_jobs["backtest"] and _jobs["backtest"].is_alive())
-    return {"running": running, "result": json.loads(r["result"]) if r else None}
-
-def _run_bt():
+@app.post("/api/restore")
+async def restore(file: UploadFile = File(...), confirm: str = ""):
+    if confirm != "RESTORE": raise HTTPException(400, "pass confirm=RESTORE")
+    blob = await file.read(); tmp = Path("/tmp/ailab-restore.db"); tmp.write_bytes(blob)
     try:
-        res = backtest.run(); backtest.save(res); db.event("INFO", "backtest", "backtest finished")
-    except Exception as e: db.event("ERROR", "backtest", f"backtest failed: {e}")
+        t = sqlite3.connect(tmp); ok = t.execute("PRAGMA integrity_check").fetchone()[0] == "ok"; has = t.execute("SELECT name FROM sqlite_master WHERE name='ledger'").fetchone(); t.close()
+        if not ok or not has: raise ValueError("not a valid AI Trading Lab ledger")
+    except Exception as e: raise HTTPException(400, f"invalid backup: {e}")
+    cur = Path(config.db_path())
+    if cur is None: raise HTTPException(500, "db path unknown")
+    shutil.copy(cur, cur.with_suffix(f".pre-restore-{now():%Y%m%d%H%M%S}.db")); shutil.copy(tmp, cur); db.init(); _regen(); return {"ok": True}
 
-@app.post("/api/backtest")
-def backtest_run():
-    if _jobs["backtest"] and _jobs["backtest"].is_alive(): raise HTTPException(409, "running")
-    t = threading.Thread(target=_run_bt, daemon=True); t.start(); _jobs["backtest"] = t; return {"started": True}
-
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
-
-@app.get("/favicon.ico", include_in_schema=False)
-def favicon(): return Response(status_code=204)
+# ------------------------------------------------------------ dashboard (same frontend as Pages; JSON comes from the live export)
+@app.get("/data/{name:path}")
+def data_file(name: str):
+    p = (LIVE / "data" / name).resolve()
+    if not str(p).startswith(str((LIVE / "data").resolve())) or not p.is_file():
+        if not LIVE.exists(): _regen()
+        raise HTTPException(404, "snapshot not generated yet - POST /api/scan or wait a few seconds")
+    return FileResponse(p, headers={"Cache-Control": "no-store"})
 
 @app.get("/")
-def index(): return FileResponse(STATIC / "index.html")
+def index(): return FileResponse(ROOT / "site_src" / "index.html")
+@app.get("/{fn}")
+def assets(fn: str):
+    p = ROOT / "site_src" / fn
+    if fn in ("app.js", "controls.js", "style.css", "lightweight-charts.js") and p.is_file(): return FileResponse(p)
+    raise HTTPException(404, "not found")

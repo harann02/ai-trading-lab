@@ -24,7 +24,7 @@ class YFProvider:
                           progress=False, threads=True)
         for s in symbols:
             try:
-                d = raw[s] if len(symbols) > 1 else raw
+                d = raw[s] if isinstance(raw.columns, pd.MultiIndex) else raw
                 d = d.dropna(how="all")
                 if len(d): out[s] = _norm(d)
             except Exception:

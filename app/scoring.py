@@ -212,3 +212,31 @@ def plan_levels(f: pd.Series, cfg, analyst_target=None):
     elif analyst_target and analyst_target > c * 1.005: tgt, src = float(analyst_target), "analyst consensus mean target"
     rr = ind.reward_to_risk(c, stop, tgt)
     return {"entry": float(c), "stop": float(stop), "target": tgt, "target_source": src, "rr": rr, "atr": float(a)}
+
+# ------------------------------------------------------------------ v2 additions (existing math above is unchanged)
+WEIGHT_PCT = {"momentum": 25, "fundamental": 20, "technical": 20, "rs_regime": 15, "liquidity": 10, "risk": 10}
+
+def validate_weights(w=None, pct=None):
+    """Raises ValueError unless the score weights are exactly 25/20/20/15/10/10 and sum to 100 (and W matches)."""
+    w = w or W; pct = pct or WEIGHT_PCT
+    if sum(pct.values()) != 100: raise ValueError(f"score weights sum to {sum(pct.values())}, expected 100")
+    if set(w) != set(pct) or any(abs(w[k] * 100 - pct[k]) > 1e-9 for k in pct): raise ValueError("W and WEIGHT_PCT disagree")
+    if abs(sum(w.values()) - 1.0) > 1e-9: raise ValueError("fractional weights must sum to 1.0")
+    return True
+validate_weights()    # import-time validation
+
+def enrich(f: pd.DataFrame, df: pd.DataFrame, spy_close=None, qqq_close=None) -> pd.DataFrame:
+    """Adds v2 features (causal): SMA5, EMA12/26, RSI2, Bollinger(20,2), 52w proximity, RS vs SPY and QQQ, pullback/breakout structure flags."""
+    g = f.copy(); c = df["close"]
+    g["sma5"] = ind.sma(c, 5); g["ema12"] = ind.ema(c, 12); g["ema26"] = ind.ema(c, 26)
+    g["rsi2"] = ind.rsi_wilder(c, 2)
+    m, sd = ind.sma(c, 20), c.rolling(20, min_periods=20).std(ddof=0)
+    g["bb_lower"] = m - 2 * sd; g["bb_upper"] = m + 2 * sd
+    g["prox52"] = c / g["hi252"]                         # 1.0 = at 52-week high
+    g["above_lo52"] = c / g["lo252"] - 1
+    g["rs_spy126"] = ind.relative_strength(c, spy_close, 126) if spy_close is not None and len(spy_close) else np.nan
+    g["rs_qqq126"] = ind.relative_strength(c, qqq_close, 126) if qqq_close is not None and len(qqq_close) else np.nan
+    g["breakout20"] = (c > g["hh20_prev"]) & (g["vol_ratio"] >= 1.0)
+    pull = (g["sma50"] > g["sma150"]) & (c < g["ema20"]) & (c > g["sma50"]) & (g["rsi14"].between(35, 55))
+    g["pullback"] = pull                                 # uptrend (SMA50>SMA150), dipped below EMA20 but holding SMA50
+    return g

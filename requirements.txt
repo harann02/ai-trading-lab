@@ -10,3 +10,8 @@ pandas_market_calendars
 holidays
 pytest
 httpx
+html5lib
+lxml
+beautifulsoup4
+requests
+python-multipart

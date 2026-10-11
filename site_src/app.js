@@ -1,202 +1,277 @@
-const $ = s => document.querySelector(s);
-/* STATIC READ-ONLY BUILD: /api/* calls are mapped to pre-exported JSON files in ./data (see export_static.py) */
-const BUST = '?t=' + Date.now();
-const jget = async f => { const r = await fetch('data/' + f + BUST, { cache: 'no-store' }); if (!r.ok) throw new Error(r.status === 404 ? 'not in static snapshot' : r.status); return r.json() };
-const api = async (p, opt) => {
-  if (opt && opt.method && opt.method !== 'GET') throw new Error('READ-ONLY static site: action disabled');
-  const [path, qs] = p.split('?'); const q = new URLSearchParams(qs || '');
-  if (path === '/equity') return jget('equity_' + (q.get('range') || 'ALL') + '.json');
-  if (path === '/discovery') { let d = await jget('discovery.json'); const m = q.get('market'); return m ? d.filter(x => x.market === m) : d }
-  if (path === '/feed') { const a = +(q.get('after') || 0); const l = +(q.get('limit') || 100); return (await jget('feed.json')).filter(e => e.id > a).slice(-l) }
-  if (path.startsWith('/candles/')) return jget('candles/' + path.slice(9) + '.json');
-  if (path.startsWith('/decision/')) return jget('decision/' + path.slice(10) + '.json');
-  if (path.startsWith('/reports/')) return jget('report_' + path.slice(9) + '.json');
-  return jget(path.slice(1) + '.json');
-};
-const post = (p, b) => Promise.reject(new Error('READ-ONLY static site: action disabled'));
-const f2 = (v, d = 2) => v == null || isNaN(v) ? '-' : Number(v).toLocaleString('en-MY', { minimumFractionDigits: d, maximumFractionDigits: d });
-const cls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
-const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-const chartOpts = { layout: { background: { color: '#0d141c' }, textColor: '#9fb3c4' }, grid: { vertLines: { color: '#17212d' }, horzLines: { color: '#17212d' } }, rightPriceScale: { borderColor: '#1f2a37' }, timeScale: { borderColor: '#1f2a37' }, crosshair: { mode: 0 } };
-const mk = (el, o = {}) => LightweightCharts.createChart(typeof el === 'string' ? $(el) : el, { ...chartOpts, autoSize: true, ...o });
-let state = { range: 'ALL', sel: null, sort: {}, lastEvent: 0 };
+/* AI Trading Lab v2 dashboard (static, read-only unless the owner signs in on the Controls tab). No secrets in this file. */
+const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const S = { d: {}, tab: 'overview', sort: {}, lastGen: null, applying: null };
+const fmt = (x, n = 2) => x == null || isNaN(x) ? '–' : Number(x).toLocaleString('en-US', { minimumFractionDigits: n, maximumFractionDigits: n });
+const pc = (x, n = 2) => x == null || isNaN(x) ? '–' : (x >= 0 ? '+' : '') + fmt(x, n) + '%';
+const cls = x => x == null ? 'dim' : x > 0 ? 'pos' : x < 0 ? 'neg' : '';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const myt = iso => iso ? new Date(iso).toLocaleString('en-GB', { timeZone: 'Asia/Kuala_Lumpur', hour12: false, year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }) + ' MYT' : '–';
+const ago = iso => { if (!iso) return '–'; const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? 'just now' : m < 90 ? m + ' min ago' : (m / 60).toFixed(1) + ' h ago'; };
+const statusCls = s => 'badge ' + String(s || '').replace(/ /g, '_');
+const J = async p => { const r = await fetch('data/' + p + (p.includes('?') ? '&' : '?') + 't=' + Date.now()); if (!r.ok) throw new Error(p + ' ' + r.status); return r.json(); };
+const NAMES = { swing: 'Momentum & Swing', meanrev: 'Mean reversion', baseline: 'Buy&hold SPY/QQQ', intraday: 'Intraday (proxy)' };
+const COLORS = { portfolio: '#e6edf3', swing: '#26a69a', meanrev: '#f5c542', baseline: '#c792ea', intraday: '#ff9a4a', SPY: '#4aa3ff', QQQ: '#ef5350' };
 
-/* ---------- generic sortable table ---------- */
-function table(el, cols, rows, key, onclick, filterEl) {
-  const host = $(el); const st = state.sort[key] || (state.sort[key] = { col: null, dir: 1 });
-  const flt = filterEl ? $(filterEl).value.toLowerCase() : '';
-  let data = rows.filter(r => !flt || JSON.stringify(r).toLowerCase().includes(flt));
-  if (st.col != null) { const c = cols[st.col]; data = [...data].sort((a, b) => { const x = c.v(a), y = c.v(b); return (x == null) - (y == null) || (x > y ? 1 : x < y ? -1 : 0) * st.dir }) }
-  host.innerHTML = '<div class="scroll"><table><thead><tr>' + cols.map((c, i) => `<th class="${c.l ? 'l' : ''}" data-i="${i}">${c.h}${st.col === i ? (st.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr></thead><tbody>' +
-    data.map((r, j) => `<tr data-j="${j}">` + cols.map(c => `<td class="${c.l ? 'l' : ''} ${c.c ? c.c(r) : ''}">${c.f ? c.f(r) : esc(c.v(r))}</td>`).join('') + '</tr>').join('') + '</tbody></table></div>' + (data.length ? '' : '<div class="dim">no rows</div>');
-  host.querySelectorAll('th').forEach(th => th.onclick = () => { const i = +th.dataset.i; st.dir = st.col === i ? -st.dir : 1; st.col = i; table(el, cols, rows, key, onclick, filterEl) });
-  if (onclick) host.querySelectorAll('tbody tr').forEach(tr => tr.onclick = () => onclick(data[+tr.dataset.j]));
+async function loadAll() {
+  const names = ['meta', 'kpis', 'equity', 'holdings', 'orders', 'ledger', 'fx', 'discovery', 'universe', 'strategies', 'providers', 'monitor', 'feed', 'reports', 'validation', 'control'];
+  const res = await Promise.allSettled(names.map(n => J(n + '.json')));
+  names.forEach((n, i) => { if (res[i].status === 'fulfilled') S.d[n] = res[i].value; else console.warn('load fail', n, res[i].reason); });
 }
 
-/* ---------- status / KPIs ---------- */
-async function loadStatus() {
-  state.meta = await api('/meta').catch(() => ({})); const s = await api('/status'); if ($('#asof')) $('#asof').textContent = 'AS OF ' + ((state.meta||{}).generated_myt || '-'); state.status = s;
-  const mk_ = s.markets.map(m => `<span class="${m.open ? 'pos' : 'dim'}">${m.market} ${m.open ? 'OPEN' : 'closed'} (${m.local_time} ${m.tz.split('/')[1]})</span>`).join(' &nbsp;|&nbsp; ');
-  const sch = s.scheduler; const nx = '';
-  $('#statusbar').innerHTML = `${s.now_myt} | data: <b class="${s.data_mode === 'LIVE' ? 'pos' : 'warn'}">${s.data_mode}</b> (yfinance delayed/EOD) | ${mk_} | USD/MYR ${s.fx.rate ? f2(s.fx.rate, 4) : 'n/a'} <span class="dim">(${s.fx.date || '-'} ${s.fx.status})</span>`;
-  const b = $('#banner'); b.classList.toggle('hidden', !s.banner); b.textContent = s.banner || '';
-  const sp = $('#suspend'); sp.classList.toggle('hidden', !s.entries_suspended);
-  sp.innerHTML = s.entries_suspended ? `⚠ NEW ENTRIES SUSPENDED: ${esc(s.suspend_reason)}. (Resume requires the owner's manual authorization - disabled on this read-only site.)` : '';
-  const srcs = s.sources.map(x => `<span class="${x.ok ? 'pos' : 'neg'}">${x.name}: ${x.ok ? 'OK' : 'FAIL'}</span> <span class="dim">${esc(x.detail).slice(0, 90)} @${x.ts.slice(11, 19)}Z</span>`).join('<br>') || '<span class="warn">no data fetched yet</span>';
-  const m = state.meta || {};
-  $('#monitor').innerHTML = `<div><b>Snapshot generated:</b> ${esc(m.generated_myt || '-')} (${esc(m.generated_utc || '')}) &middot; trigger: ${esc(m.trigger || '-')} &middot; run: ${m.run_url ? `<a href="${esc(m.run_url)}" style="color:#4aa3ff">#${esc(m.run_number)}</a>` : '-'}</div>
-   <div>Last scan: ${esc(s.last_scan || 'never')} &middot; Executor: <b class="pos">GitHub Actions</b> <span class="dim">(${esc(sch.detail)})</span></div><div>${srcs}</div>
-   <div>Data freshness: ${(m.freshness || []).map(f => `<span class="${f.ok ? 'pos' : 'warn'}">${esc(f.market)} last bar ${esc(f.last_bar || '-')} (${esc(f.status)})</span>`).join(' &nbsp;|&nbsp; ')}</div>
-   <div class="row"><button disabled title="read-only">Scan now (all)</button><button disabled>Bursa</button><button disabled>US</button><button disabled>Run monitor/execute</button> <span class="dim">Actions need the owner's backend - disabled (static read-only site).</span></div>`;
-}
-async function act(fn) { try { await fn(); setTimeout(refresh, 1500) } catch (e) { alert('Error: ' + e.message) } }
-
-async function loadKpis() {
-  const k = await api('/kpis'); $('#kpilabel').textContent = k.label;
-  const c = (l, v, x = '') => `<div class="card"><div class="l">${l}</div><div class="v ${x}">${v}</div></div>`;
-  $('#kpis').innerHTML = c('Starting capital', 'RM ' + f2(k.starting_capital)) + c('Equity', 'RM ' + f2(k.equity)) + c('Cash', 'RM ' + f2(k.cash)) + c('Total P&L', 'RM ' + f2(k.total_pnl), cls(k.total_pnl)) +
-    c("Today's P&L", 'RM ' + f2(k.todays_pnl), cls(k.todays_pnl)) + c('Return', f2(k.return_pct) + '%', cls(k.return_pct)) + c('Max drawdown', f2(k.max_drawdown_pct) + '%', k.max_drawdown_pct < 0 ? 'neg' : '') + c('Exposure', f2(k.exposure_pct) + '%') +
-    (k.stale_symbols.length ? c('STALE PRICES', k.stale_symbols.join(','), 'warn') : '');
+/* ---------------- header ---------------- */
+function chips() {
+  const m = S.d.meta || {}, k = S.d.kpis || {}, us = m.us_market || {}, fx = (k.fx || {});
+  const gen = m.generated_utc; const age = gen ? (Date.now() - new Date(gen)) / 60000 : 9e9;
+  const mk = us.open ? `<span class="chip ok">US OPEN (delayed data)</span>` : `<span class="chip mid">US ${esc(us.phase || 'CLOSED')}</span>`;
+  const nxt = us.open ? `closes ${esc(us.next_close_myt)}` : `opens ${esc(us.next_open_myt)}`;
+  $('#chips').innerHTML = mk + `<span class="chip">${nxt}</span>` +
+    `<span class="chip ${age < 45 ? 'ok' : age < 1500 ? 'mid' : 'bad'}" title="page data generated by the last workflow run">updated ${esc(myt(gen))} (${ago(gen)})</span>` +
+    `<span class="chip mid" title="${esc(m.data_label)}">DELAYED / EOD data – not real-time</span>` +
+    `<span class="chip ${fx.ok ? '' : 'bad'}">USD/MYR ${fmt(fx.rate, 4)} (${esc(fx.rate_ts || '–')})</span>` +
+    (S.applying ? `<span class="chip applying">applying…</span>` : '') +
+    `<span class="chip" id="ownerchip">${Controls.isOwner() ? 'owner ✓' : 'read-only'}</span>`;
+  const sus = k.entries_suspended || (S.d.control && S.d.control.settings && S.d.control.settings.entries_suspended);
+  const b = $('#suspend'); if (sus) { b.classList.remove('hidden'); b.textContent = 'NEW ENTRIES SUSPENDED: ' + (S.d.control.settings.suspend_reason || 'drawdown limit') + ' – owner must resume manually (Controls tab).'; } else b.classList.add('hidden');
 }
 
-/* ---------- equity ---------- */
-let eqChart, ddChart;
-async function loadEquity() {
-  $('#ranges').innerHTML = ['1D', '1W', '1M', '3M', 'YTD', 'ALL'].map(r => `<button class="${r === state.range ? 'on' : ''}" data-r="${r}">${r}</button>`).join('');
-  $('#ranges').querySelectorAll('button').forEach(b => b.onclick = () => { state.range = b.dataset.r; loadEquity() });
-  const d = await api('/equity?range=' + state.range); $('#benchname').textContent = d.benchmark_symbol ? 'vs ' + d.benchmark_symbol + ' (rebased)' : '';
-  if (eqChart) { eqChart.remove(); ddChart.remove() } eqChart = mk('#eqchart'); ddChart = mk('#ddchart');
-  const s1 = eqChart.addLineSeries({ color: '#26a69a', lineWidth: 2, title: 'Equity RM' }); s1.setData(d.equity);
-  if (d.benchmark.length) eqChart.addLineSeries({ color: '#f5c542', lineWidth: 1, title: d.benchmark_symbol }).setData(d.benchmark);
-  ddChart.addAreaSeries({ lineColor: '#ef5350', topColor: '#ef535055', bottomColor: '#ef535005' }).setData(d.drawdown);
-  eqChart.timeScale().fitContent(); ddChart.timeScale().fitContent();
+/* ---------------- helpers ---------------- */
+function table(cols, rows, o = {}) {
+  const key = o.id || 't' + Math.random(); const st = S.sort[key] || {};
+  let r = [...rows]; if (st.col != null) { const c = cols[st.col]; r.sort((a, b) => { const x = c.v(a), y = c.v(b); if (x == null) return 1; if (y == null) return -1; return (typeof x === 'string' ? x.localeCompare(y) : x - y) * st.dir; }); }
+  const lim = o.limit || 200;
+  return `<div class="tablewrap ${o.tall ? 'tall' : ''}" data-tid="${key}"><table><thead><tr>${cols.map((c, i) => `<th class="${c.l ? 'l' : ''}" data-i="${i}">${c.h}${st.col === i ? (st.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr></thead><tbody>${r.slice(0, lim).map(x => `<tr ${o.click ? `data-click="${esc(o.click(x))}"` : ''}>${cols.map(c => `<td class="${c.l ? 'l' : ''} ${c.c ? c.c(x) : ''}">${c.f ? c.f(x) : esc(c.v(x))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${r.length > lim ? `<div class="note">showing ${lim} of ${r.length} rows (use search/filter)</div>` : ''}`;
+}
+function bindTables(root, rerender) {
+  $$('[data-tid]', root).forEach(w => $$('th', w).forEach(th => th.onclick = () => { const k = w.dataset.tid, i = +th.dataset.i, s = S.sort[k] || {}; S.sort[k] = { col: i, dir: s.col === i ? -s.dir : -1 }; rerender(); }));
+  $$('[data-click]', root).forEach(tr => tr.onclick = () => { location.hash = tr.dataset.click; });
+}
+const badge = s => s ? `<span class="${statusCls(s)}">${esc(s)}</span>` : '<span class="dim">–</span>';
+const card = (l, v, sub, c) => `<div class="card"><div class="l">${l}</div><div class="v ${c || ''}">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+const mkchart = (el, h, o = {}) => LightweightCharts.createChart(el, { autoSize: true, height: h, layout: { background: { color: '#0d141c' }, textColor: '#9fb3c4' }, grid: { vertLines: { color: '#16202b' }, horzLines: { color: '#16202b' } }, timeScale: { borderColor: '#1f2a37' }, rightPriceScale: { borderColor: '#1f2a37' }, ...o });
+
+/* ---------------- overview ---------------- */
+function viewOverview(root) {
+  const k = S.d.kpis || {}, m = S.d.meta || {}, mon = S.d.monitor || {}, us = k.us_market || {}, fx = k.fx || {};
+  const cards = [
+    card('Starting capital', 'RM ' + fmt(k.starting_capital_myr, 0), 'virtual MYR account (never USD)'),
+    card('Portfolio (MYR)', 'RM ' + fmt(k.equity_myr), 'USD ' + fmt(k.equity_usd) + ' @ ' + fmt(k.usdmyr, 4)),
+    card('Cash (settled / unsettled)', 'USD ' + fmt(k.cash_usd), 'settled ' + fmt(k.settled_cash_usd) + ' · unsettled ' + fmt(k.unsettled_cash_usd) + ' · MYR cash RM' + fmt(k.cash_myr)),
+    card("Today's P&L", k.today_pnl_myr == null ? 'n/a' : 'RM ' + fmt(k.today_pnl_myr), 'vs previous recorded close', cls(k.today_pnl_myr)),
+    card('Total P&L', 'RM ' + fmt(k.total_pnl_myr), pc(k.total_return_pct) + ' since start', cls(k.total_pnl_myr)),
+    card('Return weekly / monthly', pc(k.weekly_return_pct) + ' / ' + pc(k.monthly_return_pct), 'needs history (' + (k.history_days || 0) + ' day(s) so far)'),
+    card('Max drawdown', pc(k.max_drawdown_pct), 'halt at 10% (manual resume)', cls(k.max_drawdown_pct)),
+    card('Active positions', k.active_positions, 'max 5 account-wide'),
+    card('Active strategies', k.n_active_strategies, (k.active_strategies || []).map(s => NAMES[s]).join(', ')),
+    card('US market', us.open ? 'OPEN' : 'CLOSED', us.open ? 'closes ' + esc(us.next_close_myt) : 'opens ' + esc(us.next_open_myt), us.open ? 'pos' : 'warn'),
+    card('Stock vs currency P&L', 'RM ' + fmt(k.stock_pnl_myr) + ' / RM ' + fmt(k.currency_pnl_myr), 'stock (trading, after costs) / USD-MYR move incl. FX spread paid RM' + fmt(k.fx_spread_paid_myr)),
+  ].join('');
+  const sp = (us.today_session || us.next_session) || {};
+  const specials = (m.specials || []).slice(0, 4).map(x => `<div>${esc(x.date)} – ${esc(x.type)}</div>`).join('');
+  const sum = ((S.d.reports || {}).market_summary || {});
+  root.innerHTML = `<section class="wide"><h2>Account KPIs <span class="tag">${esc(k.label)}</span></h2><div class="cards k">${cards}</div></section>
+  <section class="wide two"><div><h2>Equity curve (MYR, FX included) – forward paper only</h2><div class="legend" id="leg"></div><div id="eqc" class="chart h380"></div><div class="note" id="eqnote"></div></div>
+  <div><h2>US schedule (shown in MYT)</h2><div class="note">Internal calendar: America/New_York (DST, holidays, early closes via pandas_market_calendars).</div>
+  <div>Now (NY): ${esc(us.now_ny)}</div><div>Phase: <b>${esc(us.phase)}</b></div><div>Next/this session: ${esc(sp.date)} open <b>${esc(sp.open_myt)}</b> MYT → close <b>${esc(sp.close_myt)}</b> MYT ${sp.early_close ? '<span class="warn">(EARLY CLOSE)</span>' : ''}</div>
+  <div>Last completed session: ${esc(us.last_completed_session)}</div><h3>Upcoming holidays / early closes</h3>${specials || '<div class="dim">none in window</div>'}
+  <h3>Data timestamps</h3><div>Price data: ${esc((mon.freshness || {}).spy_last_bar)} (expected ${esc((mon.freshness || {}).expected_last_completed_session)})</div><div>FX: ${fmt(fx.rate, 4)} as of ${esc(fx.rate_ts)} – ${esc(fx.source)}</div><div>Page generated: ${esc(myt(m.generated_utc))}</div>
+  <div class="note">Label: DELAYED (yfinance). Nothing here is real-time.</div></div></section>
+  <section class="wide"><h2>Daily market summary <span class="tag">${esc(sum.mode || 'n/a')}</span></h2><div class="memo">${esc(sum.text || 'No summary yet (generated after the first scan).')}</div></section>
+  <section class="wide"><h2>Strategies at a glance</h2>${strategyTable()}</section>`;
+  drawEquity();
+}
+function strategyTable() {
+  const rows = S.d.strategies || [];
+  return table([{ h: 'Strategy', l: 1, v: r => r.name }, { h: 'Status', v: r => r.enabled_effective ? 'ON' : 'OFF', f: r => r.enabled_effective ? '<span class="ok">ON</span>' : '<span class="dim">OFF</span>' },
+    { h: 'Alloc %', v: r => r.allocation_pct, f: r => fmt(r.allocation_pct, 0) }, { h: 'Equity RM', v: r => r.sleeve && r.sleeve.equity_myr, f: r => r.sleeve ? fmt(r.sleeve.equity_myr) : '–' },
+    { h: 'Return on alloc.', v: r => r.sleeve && r.sleeve.return_on_allocated_pct, f: r => r.sleeve ? pc(r.sleeve.return_on_allocated_pct) : '–', c: r => cls(r.sleeve && r.sleeve.return_on_allocated_pct) },
+    { h: 'Trades', v: r => r.metrics.n_trades }, { h: 'Win rate', v: r => r.metrics.win_rate, f: r => r.metrics.win_rate == null ? '–' : fmt(r.metrics.win_rate * 100, 0) + '%' }], rows, { id: 'strat0' });
+}
+function drawEquity() {
+  const e = S.d.equity; if (!e) return; const el = $('#eqc'); if (!el) return;
+  const ch = mkchart(el, 380); const lines = {}; const leg = $('#leg'); let any = false;
+  Object.entries(e.series).forEach(([k, arr]) => { if (!arr.length) return; any = true; const s = ch.addLineSeries({ color: COLORS[k], lineWidth: k === 'portfolio' ? 3 : 2, title: k, priceFormat: { type: 'custom', formatter: v => v.toFixed(4) } }); s.setData(arr); lines[k] = s; });
+  leg.innerHTML = Object.keys(COLORS).map(k => `<span data-k="${k}" style="color:${COLORS[k]}">${k === 'intraday' && !(e.series.intraday || []).length ? 'intraday (disabled)' : k}</span>`).join('');
+  $$('span', leg).forEach(sp => sp.onclick = () => { const s = lines[sp.dataset.k]; if (!s) return; const off = sp.classList.toggle('off'); s.applyOptions({ visible: !off }); });
+  ch.timeScale().fitContent();
+  $('#eqnote').textContent = (e.series.portfolio.length < 3 ? 'Only ' + e.series.portfolio.length + ' daily point(s) so far – the chart fills in as sessions pass. ' : '') + e.unit + '. ' + e.intraday_note + '. ' + e.label;
 }
 
-/* ---------- holdings / discovery ---------- */
-async function loadHoldings() {
-  const h = await api('/holdings');
-  table('#holdings', [
-    { h: 'Symbol', v: r => r.symbol, l: 1 }, { h: 'Qty', v: r => r.qty }, { h: 'Avg cost RM', v: r => r.avg_cost_myr, f: r => f2(r.avg_cost_myr, 3) }, { h: 'Last', v: r => r.last_price, f: r => f2(r.last_price, 3) },
-    { h: 'Value RM', v: r => r.market_value_myr, f: r => f2(r.market_value_myr) }, { h: 'Unreal. P&L', v: r => r.unrealized_pnl_myr, f: r => f2(r.unrealized_pnl_myr) + ' (' + f2(r.unrealized_pct * 100, 1) + '%)', c: r => cls(r.unrealized_pnl_myr) },
-    { h: 'Stop (local)', v: r => r.stop, f: r => f2(r.stop, 3) }, { h: 'Target', v: r => r.target, f: r => r.target ? f2(r.target, 3) : 'none' }, { h: 'AI score', v: r => r.ai_score, f: r => f2(r.ai_score, 1) },
-    { h: 'Action', v: r => r.action, l: 1 }, { h: 'Data', v: r => r.data_flag || 'ok', l: 1, c: r => r.data_flag ? 'warn' : 'dim' }
-  ], h, 'hold', r => selectSym(r.symbol), '#f_hold');
-}
-async function loadDiscovery() {
-  let d = await api('/discovery' + ($('#mkt').value ? '?market=' + $('#mkt').value : '')); const df = $('#decf').value; if (df) d = d.filter(x => x.decision === df);
-  table('#discovery', [
-    { h: '#', v: r => r.score, f: r => '' }, { h: 'Symbol', v: r => r.symbol, l: 1 }, { h: 'Mkt', v: r => r.market, l: 1 }, { h: 'Score', v: r => r.score, f: r => f2(r.score, 1) }, { h: 'Band', v: r => r.band, l: 1 },
-    { h: 'Entry', v: r => r.entry, f: r => f2(r.entry, 3) }, { h: 'Stop', v: r => r.stop, f: r => f2(r.stop, 3) }, { h: 'Target', v: r => r.target, f: r => r.target ? f2(r.target, 3) : 'none' }, { h: 'R:R', v: r => r.rr, f: r => r.rr ? f2(r.rr) : '-' },
-    { h: 'Size', v: r => r.qty }, { h: 'Decision', v: r => r.decision, f: r => `<span class="badge ${r.decision}">${r.decision}</span>` }, { h: 'Blocked by', v: r => r.failed.join(','), l: 1, c: r => 'dim' }, { h: 'Scan date', v: r => r.scan_date }
-  ], d, 'disc', r => { selectSym(r.symbol); showDecision(r.id) }, '#f_disc');
-  document.querySelectorAll('#discovery tbody tr').forEach((tr, i) => tr.firstChild.textContent = i + 1);
-}
-
-/* ---------- candles ---------- */
-let cc = null;
-async function selectSym(sym) {
-  state.sel = sym; $('#chartsym').textContent = sym;
-  try { const d = await api('/candles/' + encodeURIComponent(sym)); drawCandles(d) } catch (e) { $('#chartmeta').textContent = 'No chart: ' + e.message }
-  try { const dd = await api('/decision/' + encodeURIComponent(sym)); renderDecision(dd) } catch (e) { $('#explain').textContent = 'No decision recorded for ' + sym }
-}
-function drawCandles(d) {
-  if (cc) cc.forEach(c => c.remove());
-  $('#chartlabel').textContent = d.label; $('#chartmeta').innerHTML = `Data status: <b class="${d.status.ok ? 'pos' : 'neg'}">${d.status.status}</b> ${esc(d.status.reason || '')} | last bar ${d.status.last_bar || '-'} ${d.demo ? '<b class="warn">DEMO SYNTHETIC</b>' : ''} | <span class="dim">SMA20 blue, SMA50 yellow, SMA200 purple, EMA20 white</span>`;
-  const c1 = mk('#cchart'), c2 = mk('#rchart'), c3 = mk('#mchart'); cc = [c1, c2, c3];
-  const cs = c1.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' }); cs.setData(d.candles);
-  const v = c1.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: '' }); v.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } }); v.setData(d.volume);
-  [['sma20', '#4aa3ff'], ['sma50', '#f5c542'], ['sma200', '#b388ff'], ['ema20', '#ffffff']].forEach(([k, col]) => c1.addLineSeries({ color: col, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(d[k]));
-  if (d.markers.length) cs.setMarkers(d.markers.sort((a, b) => a.time < b.time ? -1 : 1));
-  if (d.stop) cs.createPriceLine({ price: d.stop, color: '#ef5350', lineStyle: 2, title: 'STOP' });
-  if (d.target) cs.createPriceLine({ price: d.target, color: '#26a69a', lineStyle: 2, title: 'TARGET' });
-  const rs = c2.addLineSeries({ color: '#4aa3ff', lineWidth: 1 }); rs.setData(d.rsi); [30, 70].forEach(p => rs.createPriceLine({ price: p, color: '#555', lineStyle: 2, title: '' }));
-  c3.addHistogramSeries({}).setData(d.macd_hist); c3.addLineSeries({ color: '#4aa3ff', lineWidth: 1 }).setData(d.macd); c3.addLineSeries({ color: '#f5c542', lineWidth: 1 }).setData(d.macd_sig);
-  let lock = false; cc.forEach(a => a.timeScale().subscribeVisibleLogicalRangeChange(r => { if (lock || !r) return; lock = true; cc.forEach(b => b !== a && b.timeScale().setVisibleLogicalRange(r)); lock = false }));
-}
-async function showDecision(id) { try { renderDecision(await api('/decision/' + id)) } catch (e) {} }
-function renderDecision(d) {
-  const f = d.scores && d.scores.factors || {}; const chk = (d.checks || []).map(c => `<div class="${c.pass ? 'pos' : 'neg'}">${c.pass ? '✔' : '✘'} ${esc(c.name)}: <span class="dim">${esc(c.detail)}</span></div>`).join('');
-  const mvc = d.scores && d.scores.minervini ? Object.entries(d.scores.minervini.criteria).map(([k, v]) => `${v == null ? '?' : v ? '✔' : '✘'} ${k}`).join('\n') : '';
-  const cs = d.scores && d.scores.canslim ? Object.entries(d.scores.canslim.criteria).map(([k, v]) => `${v == null ? '?' : v ? '✔' : '✘'} ${k}`).join('\n') : '';
-  const gr = d.scores && d.scores.graham ? Object.entries(d.scores.graham.criteria).map(([k, v]) => `${v == null ? '?' : v ? '✔' : '✘'} ${k}`).join('\n') : '';
-  $('#explain').innerHTML = `<b>${esc(d.symbol)}</b> <span class="badge ${d.decision}">${d.decision}</span> score ${f2(d.score, 1)} (${esc(d.band)}) | scan ${d.scan_date} | algo ${esc(d.algo_version)} | data ${d.data_mode}
-<b>Factors</b> (weights .25/.20/.20/.15/.10/.10): ${Object.entries(f).map(([k, v]) => k + '=' + (v == null ? 'n/a' : v)).join(', ')}
-${(d.scores && d.scores.flags || []).map(x => '⚠ ' + esc(x)).join('\n')}
-<b>Checks</b>\n${chk}
-<b>Minervini trend template</b> ${d.scores && d.scores.minervini ? d.scores.minervini.passed + '/8' : ''}\n${esc(mvc)}
-<b>CAN SLIM-lite</b>\n${esc(cs)}
-<b>Graham-style</b>\n${esc(gr)}
-<b>Explanation</b>\n${esc(d.explanation)}
-${d.order ? '<b>Order</b> #' + d.order.id + ' ' + d.order.side + ' ' + d.order.qty + ' status ' + d.order.status + ' - ' + esc(d.order.reason) + (d.order.status === 'pending' && d.order.needs_approval && !d.order.approved ? ` <button onclick="act(()=>post('/orders/${d.order.id}/approve'))">Approve</button>` : '') + (d.order.status === 'pending' ? ` <button onclick="act(()=>post('/orders/${d.order.id}/cancel'))">Cancel</button>` : '') : ''}
-${d.memo && d.memo.text ? '\n<b>Investment memo</b>\n' + esc(d.memo.text) : ''}`;
+/* ---------------- discovery ---------------- */
+function viewDiscovery(root) {
+  const d = S.d.discovery || { rows: [] }, u = S.d.universe || {};
+  root.innerHTML = `<section class="wide"><h2>Auto-discovered US universe <span class="tag">${u.passed}/${u.candidates} passed filters</span> <span class="tag">scan ${esc(d.scan_date)}</span></h2>
+  <div class="note">${esc(u.method || '')}</div>
+  <div class="row"><input id="q" class="filter" placeholder="search ticker / name"><select id="fs"><option value="">any swing status</option><option>BUY ELIGIBLE</option><option>WATCH</option><option>HOLD</option><option>EXIT</option><option>REJECT</option></select>
+  <select id="fm"><option value="">any mean-rev status</option><option>BUY ELIGIBLE</option><option>WATCH</option><option>HOLD</option><option>EXIT</option><option>REJECT</option></select>
+  <label class="dim">min swing score <input id="ms" type="number" value="0" style="width:60px"></label><span class="dim" id="cnt"></span></div><div id="dt"></div>
+  <div class="note">A score never buys by itself: BUY ELIGIBLE needs regime, trigger, trend template, risk budget, settled cash and data-freshness checks. Click a row for the stock analysis page. Regime: ${esc((d.regime || {}).regime)} – ${esc((d.regime || {}).reason)}</div></section>
+  <section class="wide"><h2>Rejected by universe filters (first 120)</h2><div class="tablewrap tall">${table([{ h: 'Symbol', l: 1, v: r => r.symbol }, { h: 'Exchange', v: r => r.exchange }, { h: 'Reasons', l: 1, v: r => (JSON.parse(r.reasons || '[]')).join('; ') }], u.rejected || [], { id: 'rej' })}</div></section>`;
+  const draw = () => {
+    const q = $('#q').value.trim().toLowerCase(), fs = $('#fs').value, fm = $('#fm').value, ms = +$('#ms').value || 0;
+    const rows = d.rows.filter(r => (!q || r.symbol.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q)) && (!fs || (r.swing || {}).status === fs) && (!fm || (r.meanrev || {}).status === fm) && ((r.swing || {}).score || 0) >= ms);
+    $('#cnt').textContent = rows.length + ' rows';
+    $('#dt').innerHTML = table([
+      { h: 'Symbol', l: 1, v: r => r.symbol, f: r => '<b>' + esc(r.symbol) + '</b> <span class="dim">' + esc((r.name || '').slice(0, 22)) + '</span>' },
+      { h: 'Swing score', v: r => (r.swing || {}).score, f: r => fmt((r.swing || {}).score, 1) }, { h: 'Swing', v: r => (r.swing || {}).status, f: r => badge((r.swing || {}).status) },
+      { h: 'MeanRev', v: r => (r.meanrev || {}).status, f: r => badge((r.meanrev || {}).status) }, { h: 'MR score', v: r => (r.meanrev || {}).score, f: r => fmt((r.meanrev || {}).score, 0) },
+      { h: 'Close $', v: r => r.close, f: r => fmt(r.close) }, { h: 'RSI14', v: r => r.rsi14, f: r => fmt(r.rsi14, 0) }, { h: 'RSI2', v: r => r.rsi2, f: r => fmt(r.rsi2, 0) },
+      { h: '126d ret', v: r => r.r126, f: r => r.r126 == null ? '–' : pc(r.r126 * 100, 1), c: r => cls(r.r126) }, { h: 'vs SPY', v: r => r.rs_spy126, f: r => r.rs_spy126 == null ? '–' : pc(r.rs_spy126 * 100, 1), c: r => cls(r.rs_spy126) },
+      { h: 'vs QQQ', v: r => r.rs_qqq126, f: r => r.rs_qqq126 == null ? '–' : pc(r.rs_qqq126 * 100, 1), c: r => cls(r.rs_qqq126) }, { h: '52w prox', v: r => r.prox52, f: r => r.prox52 == null ? '–' : fmt(r.prox52 * 100, 0) + '%' },
+      { h: 'RVOL', v: r => r.vol_ratio, f: r => fmt(r.vol_ratio, 2) }, { h: 'ADV $M', v: r => r.adv_usd, f: r => r.adv_usd == null ? '–' : fmt(r.adv_usd / 1e6, 0) },
+      { h: 'Why not BUY', l: 1, v: r => ((r.swing || {}).failed || []).join(', '), f: r => '<span class="dim">' + esc(((r.swing || {}).failed || []).slice(0, 3).join(', ')) + '</span>' }], rows, { id: 'disc', click: r => '#stock/' + r.symbol, limit: 150, tall: true });
+    bindTables($('#dt'), draw);
+  };
+  ['q', 'fs', 'fm', 'ms'].forEach(i => $('#' + i).oninput = draw); draw();
 }
 
-/* ---------- ledger ---------- */
-async function loadLedger() {
-  const l = await api('/ledger');
-  table('#ledger', [
-    { h: 'ID', v: r => r.id }, { h: 'Time (MYT)', v: r => r.ts_myt, l: 1 }, { h: 'Type', v: r => r.kind, l: 1 }, { h: 'Symbol', v: r => r.symbol, l: 1 }, { h: 'Qty', v: r => r.qty }, { h: 'Price', v: r => r.price_local, f: r => f2(r.price_local, 4) + ' ' + (r.ccy || '') },
-    { h: 'FX', v: r => r.fx, f: r => f2(r.fx, 4) }, { h: 'Gross RM', v: r => r.gross_myr, f: r => f2(r.gross_myr) }, { h: 'Fees RM', v: r => r.fees_myr, f: r => f2(r.fees_myr) }, { h: 'Slip RM', v: r => r.slippage_myr, f: r => f2(r.slippage_myr) },
-    { h: 'Cash Δ RM', v: r => r.cash_delta_myr, f: r => f2(r.cash_delta_myr), c: r => cls(r.cash_delta_myr) }, { h: 'Realized RM', v: r => r.realized_pnl_myr, f: r => f2(r.realized_pnl_myr), c: r => cls(r.realized_pnl_myr) }, { h: 'Note', v: r => r.note, l: 1 }
-  ], l, 'ledger');
+/* ---------------- positions ---------------- */
+function viewPositions(root) {
+  const h = S.d.holdings || [], o = (S.d.orders || []);
+  root.innerHTML = `<section class="wide"><h2>Open positions (USD, with MYR)</h2>${h.length ? table([
+    { h: 'Symbol', l: 1, v: r => r.symbol }, { h: 'Strategy', v: r => r.strategy_id, f: r => NAMES[r.strategy_id] }, { h: 'Qty', v: r => r.qty }, { h: 'Avg cost $', v: r => r.avg_cost_usd, f: r => fmt(r.avg_cost_usd) },
+    { h: 'Last $', v: r => r.last_price_usd, f: r => fmt(r.last_price_usd) }, { h: 'Value $', v: r => r.value_usd, f: r => fmt(r.value_usd) }, { h: 'Value RM', v: r => r.value_myr, f: r => fmt(r.value_myr) },
+    { h: 'P&L $', v: r => r.unrealized_usd, f: r => fmt(r.unrealized_usd), c: r => cls(r.unrealized_usd) }, { h: 'P&L RM', v: r => r.unrealized_myr, f: r => fmt(r.unrealized_myr), c: r => cls(r.unrealized_myr) },
+    { h: 'P&L %', v: r => r.unrealized_pct, f: r => pc(r.unrealized_pct), c: r => cls(r.unrealized_pct) }, { h: 'Days held', v: r => r.days_held }, { h: 'Stop', v: r => r.stop, f: r => fmt(r.stop) }, { h: 'Target', v: r => r.target, f: r => fmt(r.target) },
+    { h: 'Reason', l: 1, v: r => r.reason }, { h: 'Action', l: 1, v: r => r.action }], h, { id: 'pos', click: r => '#stock/' + r.symbol }) : '<div class="dim">No open positions yet. Orders fill at the next US open (22:30/21:30 MYT) after a scan; see pending orders below.</div>'}</section>
+  <section class="wide"><h2>Orders (latest 60)</h2>${table([{ h: '#', v: r => r.id }, { h: 'Created', l: 1, v: r => r.created_ts, f: r => myt(r.created_ts) }, { h: 'Strategy', v: r => r.strategy_id, f: r => NAMES[r.strategy_id] || '–' },
+    { h: 'Symbol', l: 1, v: r => r.symbol }, { h: 'Side', v: r => r.side }, { h: 'Qty', v: r => r.qty }, { h: 'Ref $', v: r => r.ref_price, f: r => fmt(r.ref_price) }, { h: 'Stop', v: r => r.stop, f: r => fmt(r.stop) }, { h: 'Target', v: r => r.target, f: r => fmt(r.target) },
+    { h: 'Status', v: r => r.status }, { h: 'Fill $', v: r => r.fill_price, f: r => fmt(r.fill_price, 4) }, { h: 'Note', l: 1, v: r => r.reason }], o, { id: 'ord', click: r => '#stock/' + r.symbol })}</section>
+  <section class="wide"><h2>Ledger (append-only, latest 500) <a class="btn" href="data/ledger.csv">CSV</a></h2>${table([{ h: 'ID', v: r => r.id }, { h: 'Time (MYT)', l: 1, v: r => r.ts, f: r => myt(r.ts) }, { h: 'Kind', l: 1, v: r => r.kind }, { h: 'Strategy', v: r => r.strategy_id }, { h: 'Symbol', v: r => r.symbol },
+    { h: 'Qty', v: r => r.qty }, { h: 'Price $', v: r => r.price_local, f: r => fmt(r.price_local, 4) }, { h: 'Fees $', v: r => r.fees_usd, f: r => fmt(r.fees_usd, 3) }, { h: 'Spread $', v: r => r.spread_usd, f: r => fmt(r.spread_usd, 3) },
+    { h: 'Δ MYR', v: r => r.cash_delta_myr, f: r => fmt(r.cash_delta_myr) }, { h: 'Δ USD', v: r => r.cash_delta_usd, f: r => fmt(r.cash_delta_usd) }, { h: 'Realized $', v: r => r.realized_stock_usd, f: r => fmt(r.realized_stock_usd) }, { h: 'Settles', v: r => r.settle_date }, { h: 'Note', l: 1, v: r => r.note }], S.d.ledger || [], { id: 'led', limit: 60, tall: true })}</section>
+  <section class="wide"><h2>FX conversions (audit trail)</h2>${table([{ h: 'ID', v: r => r.id }, { h: 'Time', l: 1, v: r => r.ts, f: r => myt(r.ts) }, { h: 'Strategy', v: r => r.strategy_id }, { h: 'MYR', v: r => r.myr_amount, f: r => fmt(r.myr_amount) }, { h: 'USD', v: r => r.usd_amount, f: r => fmt(r.usd_amount) },
+    { h: 'Mid', v: r => r.mid_rate, f: r => fmt(r.mid_rate, 5) }, { h: 'Spread bps', v: r => r.spread_bps }, { h: 'Effective', v: r => r.effective_rate, f: r => fmt(r.effective_rate, 5) }, { h: 'Spread cost RM', v: r => r.spread_cost_myr, f: r => fmt(r.spread_cost_myr) },
+    { h: 'Rate date', v: r => r.rate_ts }, { h: 'Source', l: 1, v: r => r.rate_source }], (S.d.fx || {}).conversions || [], { id: 'fxc' })}<div class="note">${esc((S.d.fx || {}).note)}</div></section>`;
+  bindTables(root, () => viewPositions(root));
 }
 
-/* ---------- analytics ---------- */
-let anCharts = [];
-function bars(el, rows, fmt = v => f2(v)) {
-  const mx = Math.max(1e-9, ...rows.map(r => Math.abs(r.value)));
-  $(el).innerHTML = rows.map(r => `<div class="bar"><span style="width:90px">${esc(r.name)}</span><i class="${r.value < 0 ? 'n' : ''}" style="width:${Math.abs(r.value) / mx * 140}px"></i><span class="${cls(r.value)}">${fmt(r.value)}</span></div>`).join('') || '<span class="dim">no data</span>';
-}
-async function loadAnalytics() {
-  const a = await api('/analytics'); anCharts.forEach(c => c.remove()); anCharts = [];
-  const hist = (el, rows) => { const c = mk(el); anCharts.push(c); c.addHistogramSeries({}).setData(rows.map(r => ({ time: r.period, value: r.ret_pct, color: r.ret_pct >= 0 ? '#26a69a' : '#ef5350' }))); c.timeScale().fitContent() };
-  hist('#monthly', a.monthly); hist('#weekly', a.weekly);
-  const fc = mk('#fees'); anCharts.push(fc); const m = new Map(); a.fees_slippage.forEach(r => m.set(r.time, r));
-  const arr = [...m.values()]; fc.addLineSeries({ color: '#f5c542', title: 'fees' }).setData(arr.map(r => ({ time: r.time, value: r.fees }))); fc.addLineSeries({ color: '#b388ff', title: 'slip' }).setData(arr.map(r => ({ time: r.time, value: r.slippage }))); fc.timeScale().fitContent();
-  bars('#winloss', [{ name: 'wins', value: a.win_loss.wins }, { name: 'losses', value: -a.win_loss.losses }], v => Math.abs(v));
-  bars('#bystock', a.profit_by_symbol); bars('#alloc', a.allocation);
-  const p = await api('/performance'); const rows = Object.entries(p).filter(([k, v]) => typeof v !== 'object' && k !== 'label').map(([k, v]) => `<tr><td class="l">${k}</td><td>${typeof v === 'number' ? f2(v, 3) : esc(v)}</td></tr>`).join('');
-  $('#perf').innerHTML = `<div class="dim">${esc(p.label)}. Risk-free ${p.assumptions.risk_free_rate_annual * 100}% p.a., 252 trading days/yr. ${esc(p.assumptions.note)}</div><div class="scroll"><table><tbody>${rows}</tbody></table></div>`;
-}
-
-/* ---------- feed / SSE with polling fallback ---------- */
-function addEvents(evs) {
-  const box = $('#feed'); evs.forEach(e => { if (e.id <= state.lastEvent) return; state.lastEvent = e.id;
-    const d = document.createElement('div'); d.className = e.level === 'ERROR' || e.level === 'CRITICAL' ? 'neg' : e.level === 'WARN' ? 'warn' : '';
-    d.textContent = `${e.ts.replace('T', ' ').slice(5, 19)}Z [${e.source}] ${e.message}`; box.prepend(d) });
-}
-function startFeed() { api('/feed?limit=100').then(addEvents).then(() => $('#sse').textContent = 'static snapshot') }
-
-/* ---------- settings ---------- */
-async function loadSettings() {
-  const s = await api('/settings');
-  const num = (k, l) => `<label>${l}<input data-k="${k}" type="number" step="any" value="${s[k]}"></label>`;
-  const chk = (k, l) => `<label>${l}<select data-k="${k}" data-bool="1"><option value="true" ${s[k] ? 'selected' : ''}>ON</option><option value="false" ${!s[k] ? 'selected' : ''}>OFF</option></select></label>`;
-  $('#settings').innerHTML = `<div class="banner">Settings, manual overrides, deposits/withdrawals, import/export and FULL RESET need the owner's private backend and are <b>disabled</b> on this public read-only site. Values below are the current paper-trading configuration (read-only).</div>
-  <div class="form">${num('risk_per_trade_pct', 'Risk per trade %')}${num('max_position_pct', 'Max per stock %')}${num('max_exposure_pct', 'Max exposure %')}${num('min_cash_pct', 'Min cash %')}${num('max_positions', 'Max positions')}${num('max_drawdown_pct', 'Max drawdown %')}${num('atr_stop_mult', 'ATR stop multiple')}${num('min_rr', 'Min reward:risk')}${num('buy_min_score', 'Min score for BUY')}${chk('auto_trade', 'Auto-trade (paper)')}</div>
-  <div class="row"><button disabled>Save settings</button><button disabled>Deposit</button><button disabled>Withdraw</button><button disabled>Block symbol</button><button disabled>Close position</button><button disabled>Raise stop</button><button disabled style="border-color:#ef5350;color:#ef5350">FULL RESET</button></div>
-  <div class="dim">Starting capital ${f2(s.starting_capital)}. Entries suspended: ${s.entries_suspended}. Blocked: ${esc(s.blocked_symbols.join(', ') || 'none')}</div>`;
-  document.querySelectorAll('#settings input,#settings select').forEach(e => e.disabled = true);
+/* ---------------- strategies ---------------- */
+function viewStrategies(root) {
+  const sv = S.d.strategies || [], prov = S.d.providers || [];
+  const caps = ['historical', 'eod', 'intraday_candles', 'realtime_quotes', 'bid_ask', 'trades', 'depth', 'corporate_actions', 'fundamentals', 'earnings_calendar', 'news'];
+  root.innerHTML = sv.map(s => { const m = s.metrics || {}, sl = s.sleeve || {};
+    return `<section><h2>${esc(s.name)} <span class="tag ${s.enabled_effective ? '' : 'warn'}">${s.enabled_effective ? 'ENABLED' : 'DISABLED'}</span></h2>
+    ${s.id === 'intraday' ? `<div class="errbox">${esc(s.label)}<br>Disabled because: ${esc((s.disabled_reasons || []).join('; ') || 'owner switch off')}<br>Research backtest on real delayed 5m candles is available (Validation tab). Live execution requires real-time quotes.</div>` : ''}
+    <div class="cards"><div class="card"><div class="l">Allocation</div><div class="v">${fmt(s.allocation_pct, 0)}%</div><div class="s">invested RM${fmt(sl.invested_myr)}</div></div>
+    <div class="card"><div class="l">Equity</div><div class="v">RM${fmt(sl.equity_myr)}</div><div class="s">USD ${fmt(sl.equity_usd)}</div></div>
+    <div class="card"><div class="l">Return on allocated</div><div class="v ${cls(sl.return_on_allocated_pct)}">${pc(sl.return_on_allocated_pct)}</div><div class="s">incl. FX spread RM${fmt(sl.fx_spread_paid_myr)}</div></div>
+    <div class="card"><div class="l">Trades / win rate</div><div class="v">${m.n_trades || 0} / ${m.win_rate == null ? '–' : fmt(m.win_rate * 100, 0) + '%'}</div><div class="s">avg hold ${fmt(m.avg_holding_days, 1)}d</div></div>
+    <div class="card"><div class="l">Max DD · Sharpe · Sortino</div><div class="v">${m.max_drawdown_pct == null ? '–' : pc(m.max_drawdown_pct)}</div><div class="s">${m.sharpe == null ? 'Sharpe/Sortino n/a (<20 daily returns)' : fmt(m.sharpe) + ' / ' + fmt(m.sortino)}</div></div>
+    <div class="card"><div class="l">Costs</div><div class="v">$${fmt((m.fees_usd || 0) + (m.spread_slippage_usd || 0), 2)}</div><div class="s">fees $${fmt(m.fees_usd, 2)} · spread+slip $${fmt(m.spread_slippage_usd, 2)}</div></div>
+    <div class="card"><div class="l">Stock vs currency</div><div class="v">${fmt(sl.stock_pnl_myr)} / ${fmt(sl.currency_pnl_myr)}</div><div class="s">RM, trading vs USD/MYR</div></div>
+    <div class="card"><div class="l">Cash USD</div><div class="v">${fmt(sl.cash_usd)}</div><div class="s">settled ${fmt(sl.settled_cash_usd)} · unsettled ${fmt(sl.unsettled_cash_usd)}</div></div></div>
+    ${m.note ? `<div class="note">${esc(m.note)}</div>` : ''}</section>`; }).join('') +
+    `<section class="wide"><h2>Data providers &amp; detected capabilities</h2><div class="tablewrap">${table([{ h: 'Provider', l: 1, v: r => r.provider }, { h: 'Active', v: r => r.active ? 'yes' : 'no', f: r => r.active ? '<span class="ok">active</span>' : '<span class="dim">inactive</span>' }]
+      .concat(caps.map(c => ({ h: c.replace('_', ' '), v: r => (r.caps[c] || {}).available ? 1 : 0, f: r => { const x = r.caps[c]; return !x ? '–' : x.available ? `<span class="ok" title="${esc(x.latency || '')} ${esc(x.note || '')}">✓</span>` : `<span class="dim" title="${esc(x.note || '')}">✗</span>`; } }))), prov, { id: 'prov' })}</div>
+    <div class="note">${prov.map(p => esc(p.provider) + ': ' + esc(p.note)).join(' · ')}. Strategies needing unavailable feeds are auto-disabled. Alpaca/Polygon adapters activate only with API keys and are UNTESTED here.</div></section>`;
+  bindTables(root, () => viewStrategies(root));
 }
 
-/* ---------- backtest / report ---------- */
-async function loadBacktest() {
-  const b = await api('/backtest'); const r = b.result; $('#btrun').disabled = true;
-  if (!r) { $('#bt').innerHTML = '<span class="dim">No backtest run yet.</span>'; return }
-  const row = (n, s) => s ? `<tr><td class="l">${n}</td><td>${f2(s.total_return_pct)}</td><td>${f2(s.cagr_pct)}</td><td>${f2(s.max_drawdown_pct)}</td><td>${f2(s.sharpe)}</td><td>${f2(s.sortino)}</td><td>${s.n_trades ?? '-'}</td><td>${f2(s.win_rate_pct, 1)}</td><td>${f2(s.profit_factor)}</td><td>${f2(s.avg_holding_days, 1)}</td><td>${s.avg_exposure != null ? f2(s.avg_exposure * 100, 1) : '-'}</td></tr>` : '';
-  const sp = r.splits; const bm = r.benchmarks_buy_and_hold_myr.test;
-  $('#bt').innerHTML = `<div class="tag warn">${esc(r.label)}</div> Period ${r.period} (${f2(r.years, 1)} yrs), params ${JSON.stringify(r.selected_params)} (${r.selection_rule}). Train ${sp.train.join('..')}, validation ${sp.validation.join('..')}, test ${sp.test.join('..')}.
-  <div class="scroll"><table><thead><tr><th class="l">Run</th><th>Return %</th><th>CAGR %</th><th>MDD %</th><th>Sharpe</th><th>Sortino</th><th>Trades</th><th>Win %</th><th>PF</th><th>Avg hold d</th><th>Exposure %</th></tr></thead><tbody>
-  ${row('STRATEGY test (out-of-sample)', r.test_result)}${row('STRATEGY full period', r.full_period_result_selected_params)}${row('Walk-forward stitched OOS', r.walk_forward.stitched_oos)}${Object.entries(bm).map(([k, v]) => row('B&H ' + k + ' (test, MYR)', v)).join('')}</tbody></table></div>
-  <ul>${r.caveats.map(c => '<li class="warn">' + esc(c) + '</li>').join('')}</ul>`;
+/* ---------------- AI research ---------------- */
+function viewResearch(root) {
+  const f = S.d.feed || { memos: [] }, rp = S.d.reports || {}, ai = f.ai || {};
+  const w = rp.weekly_strategy;
+  root.innerHTML = `<section class="wide"><h2>AI research layer <span class="tag ${ai.mode === 'LLM' ? '' : 'warn'}">${esc(ai.label || '')}</span></h2><div class="note">${esc(f.note)} Every prompt, response and source-data blob is logged in the ledger DB (llm_log). LLM numbers are verified against the source data; otherwise the template is used.</div></section>
+  <section class="wide"><h2>Daily market summary <span class="tag">${esc((rp.market_summary || {}).mode)}</span></h2><div class="memo">${esc((rp.market_summary || {}).text || 'none yet')}</div></section>
+  <section class="wide"><h2>Weekly strategy report <span class="tag">${esc((w || {}).mode)}</span></h2><div class="memo">${esc((w || {}).text || 'Generated Saturdays (Actions cron) or on demand – none yet.')}</div></section>
+  <section class="wide"><h2>AI decision feed (memos for eligible/held/top-watch names)</h2>${(f.memos || []).map(m => `<div><b>${esc(m.ts ? myt(m.ts) : '')}</b> <a href="#stock/${esc(m.symbol)}">${esc(m.symbol)}</a> <span class="pill">${esc(NAMES[m.strategy_id] || m.strategy_id)}</span> <span class="pill">${esc(m.mode)}</span><div class="memo">${esc(m.text)}</div></div>`).join('') || '<div class="dim">No memos yet.</div>'}
+  <h3>Recent engine decisions</h3>${table([{ h: 'Time', l: 1, v: r => r.ts, f: r => myt(r.ts) }, { h: 'Symbol', v: r => r.symbol }, { h: 'Strategy', v: r => r.strategy_id, f: r => NAMES[r.strategy_id] }, { h: 'Status', v: r => r.decision, f: r => badge(r.decision) }, { h: 'Score', v: r => r.score, f: r => fmt(r.score, 1) }, { h: 'Explanation', l: 1, v: r => r.explanation }], f.decisions || [], { id: 'dec', click: r => '#stock/' + r.symbol })}</section>`;
+  bindTables(root, () => viewResearch(root));
 }
-async function loadReport() { try { const r = await api('/reports/daily'); $('#report').textContent = r.narrative + '\n\nfacts hash: ' + r.hash + '\n' + JSON.stringify(r.facts, null, 1) } catch (e) { $('#report').textContent = 'no report yet' } }
 
-async function refresh() {
-  const jobs = [loadStatus, loadKpis, loadEquity, loadHoldings, loadDiscovery, loadLedger, loadAnalytics, loadReport, loadBacktest];
-  await Promise.all(jobs.map(j => j().catch(e => console.error(j.name, e))));
+/* ---------------- activity ---------------- */
+function viewActivity(root) {
+  const m = S.d.monitor || {}, meta = S.d.meta || {}, hb = m.heartbeats || {}, fr = m.freshness || {};
+  const hrows = Object.values(hb).map(x => ({ name: x.name, ts: x.ts, info: (x.info || '').slice(0, 90) }));
+  root.innerHTML = `<section><h2>Activity monitor</h2><div class="note">${esc(m.scheduler)}</div>
+  <div>Last scan: <b>${esc(myt((hb.last_scan || {}).ts))}</b> (${ago((hb.last_scan || {}).ts)})</div><div>Last workflow run: <b>${esc(myt((hb.last_ci_run || {}).ts))}</b> – ${esc((hb.last_ci_run || {}).info)} ${meta.run_url ? `<a href="${esc(meta.run_url)}">run #${esc(meta.run_number)}</a>` : ''}</div>
+  <div>Next scan: after the next US close – cron 21:30 UTC Mon–Fri = <b>05:30 MYT Tue–Sat</b>; monitor every ~15 min during US hours (best effort).</div>
+  <div>Data: SPY last bar ${esc(fr.spy_last_bar)} · expected ${esc(fr.expected_last_completed_session)} → ${fr.spy_last_bar === fr.expected_last_completed_session ? '<span class="ok">fresh</span>' : '<span class="bad">STALE → trading blocked</span>'}</div>
+  <div>Triggered by: ${esc(meta.trigger)} · platform ${esc(meta.platform_version)} · controls applied so far: ${esc(meta.controls_applied_count)}</div>
+  <h3>Heartbeats</h3>${table([{ h: 'Name', l: 1, v: r => r.name }, { h: 'Last', l: 1, v: r => r.ts, f: r => myt(r.ts) + ' (' + ago(r.ts) + ')' }, { h: 'Info', l: 1, v: r => r.info }], hrows, { id: 'hb' })}
+  <h3>Data sources</h3>${table([{ h: 'Source', l: 1, v: r => r.name }, { h: 'OK', v: r => r.ok ? 'ok' : 'FAIL', c: r => r.ok ? 'ok' : 'bad' }, { h: 'Last', l: 1, v: r => r.ts, f: r => myt(r.ts) }, { h: 'Detail', l: 1, v: r => r.detail }], m.sources || [], { id: 'src' })}
+  <h3>Errors / warnings</h3>${(m.errors || []).length ? (m.errors || []).map(e => `<div class="errbox">${esc(e.ts)} [${esc(e.level)}] ${esc(e.source)}: ${esc(e.message).slice(0, 300)}</div>`).join('') : '<div class="ok">none recorded</div>'}</section>
+  <section><h2>Event log</h2><div class="feed" style="max-height:620px">${(m.events || []).map(e => `<div><span class="dim">${esc(myt(e.ts))}</span> <b class="${e.level === 'ERROR' ? 'bad' : e.level === 'WARN' ? 'warn' : ''}">${esc(e.level)}</b> ${esc(e.source)}: ${esc(e.message).slice(0, 220)}</div>`).join('')}</div>
+  <h3>Control audit (owner commands &amp; setting changes)</h3><div class="feed">${((S.d.control || {}).audit || []).map(a => `<div><span class="dim">${esc(myt(a.ts))}</span> <b>${esc(a.action)}</b> by ${esc(a.actor)} (${esc(a.source)}): <span class="dim">${esc(String(a.detail).slice(0, 160))}</span></div>`).join('') || '<div class="dim">none</div>'}</div></section>`;
+  bindTables(root, () => viewActivity(root));
 }
-['f_hold', 'f_disc'].forEach(id => $('#' + id).oninput = () => (id === 'f_hold' ? loadHoldings() : loadDiscovery()));
-$('#mkt').onchange = loadDiscovery; $('#decf').onchange = loadDiscovery;
-refresh().then(async () => { await loadSettings(); const d = await api('/discovery').catch(() => []); if (d.length) selectSym(d[0].symbol); startFeed() });
-setInterval(() => { loadStatus(); loadKpis(); loadHoldings() }, 20000); setInterval(refresh, 120000);
+
+/* ---------------- validation ---------------- */
+function viewValidation(root) {
+  const v = S.d.validation || {}; const b = v.backtest;
+  let h = `<section class="wide"><h2>Validation &amp; Experiment Lab <span class="tag warn">HISTORICAL BACKTEST / OUT-OF-SAMPLE – never mixed with forward paper results</span></h2><div class="note">${esc(v.note || '')}</div></section>`;
+  if (b) {
+    const names = Object.keys(b.periods).filter(k => !k.startsWith('_'));
+    const N = (h, key, d) => ({ h, v: r => r.m[key], f: r => r.m[key] == null ? '–' : fmt(r.m[key], d) });
+    const cols = [{ h: 'Strategy', l: 1, v: r => r.k }, N('Ret USD %', 'ret_usd_pct', 1), N('Ret MYR % (after exit FX)', 'ret_myr_pct_after_exit_fx', 1), N('Max DD %', 'max_dd_pct', 1), N('Sharpe', 'sharpe', 2), N('Sortino', 'sortino', 2),
+      N('Trades', 'n_trades', 0), N('Win %', 'win_rate', 0), N('Avg hold d', 'avg_hold_days', 1), N('Costs $', 'costs_usd', 0)];
+    h += `<section class="wide"><h2>Headline (honest)</h2>${(b.headline || []).map(x => `<div class="note">• ${esc(x)}</div>`).join('')}<div class="note"><b>Verdict rule:</b> ${esc((b.verdict_oos.reasons || []).join(' | '))} · winner_declared = <b>${b.verdict_oos.winner_declared}</b></div>
+      <div class="note">Generated ${esc(b.generated)} · ${esc(b.kind)} · universe ${b.setup.universe_size} symbols · start RM${b.setup.start_capital_myr} · FX spread ${b.setup.fx_spread_bps} bps · params tuned: <b>${b.setup.params_tuned}</b></div></section>`;
+    for (const n of names) h += `<section class="wide"><h2>${esc(n)} <span class="dim">${esc((b.periods[n]['swing'] || {}).start || '')} → ${esc((b.periods[n]['swing'] || {}).end || '')}</span></h2>${table(cols, Object.entries(b.periods[n]).map(([k, m]) => ({ k, m })), { id: 'bt' + n })}</section>`;
+    h += `<section class="wide"><h2>Caveats (disclosed)</h2>${b.caveats.map(c => `<div class="note">• ${esc(c)}</div>`).join('')}</section>`;
+    const i = b.intraday || {}; const r = (i.result || [])[0] || i.result || {};
+    h += `<section class="wide"><h2>B · Intraday research <span class="tag warn">DISABLED for live · research only</span></h2><div class="note">${esc(i.label || i.status || '')}</div><div class="note">${esc(i.note || '')}</div>
+      <div class="memo">${r.n_trades != null ? `trades ${r.n_trades} · net P&amp;L $${fmt(r.net_pnl_usd, 2)} (${fmt(r.return_pct_on_capital, 1)}% of $${r.capital_usd}) · win ${fmt((r.win_rate || 0) * 100, 0)}% · costs $${fmt(r.costs_usd, 2)} · ${r.days_with_data} days · exits ${esc(JSON.stringify(r.exit_reasons))}` : esc(JSON.stringify(i).slice(0, 400))}</div></section>`;
+  }
+  h += (v.experiments || []).map(e => `<section class="wide"><h2>${esc(e.label)}</h2><div class="memo">${esc(e.summary_text || JSON.stringify(e).slice(0, 800))}</div></section>`).join('');
+  root.innerHTML = h || '<section class="wide"><div class="dim">No experiments stored yet.</div></section>';
+  bindTables(root, () => viewValidation(root));
+}
+
+/* ---------------- stock page ---------------- */
+async function viewStock(root, sym) {
+  root.innerHTML = `<section class="wide"><div class="stockhead"><h1>${esc(sym)}</h1><a href="#discovery">← back</a><span class="dim" id="sinfo">loading…</span></div><div id="sc"></div></section>`;
+  let cd, dc;
+  try { [cd, dc] = await Promise.all([J('candles/' + sym + '.json'), J('decision/' + sym + '.json').catch(() => null)]); } catch (e) { $('#sinfo').textContent = 'No data for ' + sym + ' in this snapshot (only top-ranked / held / pending symbols are exported).'; return; }
+  const disc = (S.d.discovery.rows || []).find(r => r.symbol === sym) || {}; const st = dc ? dc.strategies : {}; const sw = st.swing, mr = st.meanrev;
+  const snap = (sw || mr || {}).snapshot || {};
+  $('#sinfo').innerHTML = `${esc(disc.name || '')} · ${esc(disc.exchange || '')} · last bar <b>${esc(cd.last_bar)}</b> ${cd.final ? '(final EOD)' : '<span class="warn">(partial/delayed intraday bar)</span>'} · <span class="warn">delayed data – not real-time</span>`;
+  const planOf = x => x && x.plan || {};
+  const rowOf = (n, x) => x ? `<div class="card"><div class="l">${n}</div><div class="v">${badge(x.decision)}</div><div class="s">score ${fmt(x.score, 1)} · ${esc(x.scan_date)}</div></div>` : '';
+  const p = planOf(sw && sw.decision === 'BUY ELIGIBLE' ? sw : (mr && mr.decision === 'BUY ELIGIBLE' ? mr : sw || mr));
+  const factors = ((sw || {}).scores || {}).factors || {}; const W = ((sw || {}).scores || {}).weights || {};
+  const bars = Object.entries(factors).map(([k, v]) => `<div class="bar"><span style="width:96px">${k}</span><i style="width:${Math.max(2, (v || 0) * 1.6)}px"></i><span>${fmt(v, 1)} <span class="dim">× ${fmt((W[k] || 0) * 100, 0)}%</span></span></div>`).join('');
+  const checks = ((sw || mr || {}).checks || []).map(c => `<tr><td class="l">${c.pass ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>'} ${esc(c.name)}</td><td class="l dim">${esc(c.detail)}</td></tr>`).join('');
+  const memo = (sw && sw.memo) || (mr && mr.memo);
+  $('#sc').innerHTML = `<div class="cards k">${rowOf('Momentum & Swing', sw)}${rowOf('Mean reversion', mr)}${card('Close', '$' + fmt(((cd.candles || []).slice(-1)[0] || {}).close), 'bar ' + esc(cd.last_bar))}
+    ${card('Entry / Stop', p.entry ? '$' + fmt(p.entry) + ' / $' + fmt(p.stop) : '–', p.target ? 'target $' + fmt(p.target) + ' R:R ' + fmt(p.rr) : 'no credible target')}
+    ${card('Size / Max loss', p.qty != null ? p.qty + ' sh' : '–', p.max_loss_usd != null ? '$' + fmt(p.max_loss_usd) + ' (RM' + fmt(p.max_loss_myr) + ')' : '')}</div>
+  <div id="pc" class="chart h380"></div><div class="sub">RSI(14)</div><div id="rc" class="chart h120"></div><div class="sub">MACD(12,26,9)</div><div id="mc" class="chart h120"></div>
+  <div class="note">${esc(cd.label)} Lines: SMA20 (blue), SMA50 (yellow), SMA200 (red), VWAP-20d proxy (purple). ▲/▼ = simulated paper fills.</div>
+  <div class="two"><div><h3>Score breakdown (swing, weights 25/20/20/15/10/10)</h3>${bars || '<div class="dim">not scored in latest scan</div>'}<div class="note">${esc((((sw || {}).scores || {}).flags || []).join(' · '))}</div>
+  <h3>Setup &amp; checks</h3><div class="tablewrap"><table>${checks}</table></div></div>
+  <div><h3>Context</h3><div class="note">Regime: ${esc((snap.regime || {}).regime)} – ${esc((snap.regime || {}).reason)}</div>
+  <div class="note">RS vs SPY ${disc.rs_spy126 == null ? '–' : pc(disc.rs_spy126 * 100, 1)} · vs QQQ ${disc.rs_qqq126 == null ? '–' : pc(disc.rs_qqq126 * 100, 1)} · 52w proximity ${disc.prox52 == null ? '–' : fmt(disc.prox52 * 100, 0) + '%'}</div>
+  <h3>AI memo ${memo ? `<span class="tag">${esc(memo.mode)}</span>` : ''}</h3><div class="memo">${esc(memo ? memo.text : 'No memo generated for this symbol in the latest scan (memos cover eligible / held / top-3 watch names).')}</div></div></div>`;
+  const ch = mkchart($('#pc'), 380), cs = ch.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' }); cs.setData(cd.candles);
+  const ln = (arr, color, w = 1) => { const s = ch.addLineSeries({ color, lineWidth: w, priceLineVisible: false, lastValueVisible: false }); s.setData(cd.candles.map((c, i) => arr[i] == null ? null : { time: c.time, value: arr[i] }).filter(Boolean)); };
+  ln(cd.sma20, '#4aa3ff'); ln(cd.sma50, '#f5c542'); ln(cd.sma200, '#ef5350', 2); ln(cd.vwap20, '#c792ea');
+  if (p.stop) cs.createPriceLine({ price: p.stop, color: '#ef5350', lineStyle: 2, title: 'stop' }); if (p.target) cs.createPriceLine({ price: p.target, color: '#26a69a', lineStyle: 2, title: 'target' });
+  const mk = (cd.markers || []).map(m => ({ time: m.time, position: m.side === 'BUY' ? 'belowBar' : 'aboveBar', color: m.side === 'BUY' ? '#26a69a' : '#ef5350', shape: m.side === 'BUY' ? 'arrowUp' : 'arrowDown', text: m.side + ' ' + m.qty })).sort((a, b) => a.time < b.time ? -1 : 1);
+  const lastT = cd.candles[cd.candles.length - 1].time; cs.setMarkers(mk.filter(x => x.time <= lastT));
+  const rc = mkchart($('#rc'), 120); const rs = rc.addLineSeries({ color: '#f5c542', lineWidth: 1 }); rs.setData(cd.candles.map((c, i) => cd.rsi14[i] == null ? null : { time: c.time, value: cd.rsi14[i] }).filter(Boolean)); rs.createPriceLine({ price: 70, color: '#555' }); rs.createPriceLine({ price: 30, color: '#555' });
+  const mc = mkchart($('#mc'), 120); const h = mc.addHistogramSeries({ color: '#26a69a' }); h.setData(cd.candles.map((c, i) => cd.macd_hist[i] == null ? null : { time: c.time, value: cd.macd_hist[i], color: cd.macd_hist[i] >= 0 ? '#26a69a' : '#ef5350' }).filter(Boolean));
+  const a = mc.addLineSeries({ color: '#4aa3ff', lineWidth: 1 }); a.setData(cd.candles.map((c, i) => cd.macd[i] == null ? null : { time: c.time, value: cd.macd[i] }).filter(Boolean)); const b = mc.addLineSeries({ color: '#ff9a4a', lineWidth: 1 }); b.setData(cd.candles.map((c, i) => cd.macd_sig[i] == null ? null : { time: c.time, value: cd.macd_sig[i] }).filter(Boolean));
+  [ch, rc, mc].forEach(c => c.timeScale().fitContent());
+}
+
+/* ---------------- router / poll ---------------- */
+async function route() {
+  const h = (location.hash || '#overview').slice(1); const [t, arg] = h.split('/'); S.tab = t;
+  $$('#tabs a').forEach(a => a.classList.toggle('on', a.dataset.t === (t === 'stock' ? 'discovery' : t)));
+  const root = $('#view'); window.scrollTo(0, 0);
+  try {
+    if (t === 'stock') return viewStock(root, decodeURIComponent(arg || ''));
+    ({ overview: viewOverview, discovery: viewDiscovery, positions: viewPositions, strategies: viewStrategies, research: viewResearch, activity: viewActivity, validation: viewValidation, controls: Controls.render }[t] || viewOverview)(root);
+  } catch (e) { root.innerHTML = '<section class="wide"><div class="errbox">UI error: ' + esc(e.message) + '</div></section>'; console.error(e); }
+}
+async function poll(force) {
+  try {
+    const m = await J('meta.json');
+    if (force || m.generated_utc !== S.lastGen) { const first = S.lastGen == null; S.lastGen = m.generated_utc; await loadAll(); chips(); Controls.onData(); if (first || S.tab !== 'controls') route(); }
+    chips();
+  } catch (e) { console.warn(e); }
+}
+window.addEventListener('hashchange', route);
+(async () => { await loadAll(); S.lastGen = (S.d.meta || {}).generated_utc; chips(); route(); setInterval(() => poll(false), 20000); setInterval(chips, 30000); })();
+window.AITL = { S, poll, route, chips };

@@ -1,51 +1,18 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>AI Trading Lab - paper trading</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><title>AI Trading Lab v2 - US paper trading</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="style.css">
 <script src="lightweight-charts.js"></script></head><body>
 <header>
-  <div class="brand">AI TRADING LAB <span class="tag paper">PAPER ONLY - NO REAL MONEY</span></div>
-  <div id="statusbar"></div>
+  <div class="brand">AI TRADING LAB <span class="ver">v2.0</span> <span class="tag paper">PAPER ONLY - NO REAL MONEY</span></div>
+  <div id="chips" class="chips"></div>
 </header>
-<div class="banner" style="text-align:center;font-weight:bold;letter-spacing:1px">PAPER TRADING &middot; DELAYED DATA (yfinance, EOD/&ge;15 min) &middot; READ-ONLY SNAPSHOT &middot; NOT INVESTMENT ADVICE &middot; <span id="asof"></span></div>
-<div id="banner" class="banner hidden"></div>
+<div class="banner" id="topbanner">PAPER TRADING &middot; US EQUITIES ONLY &middot; DELAYED yfinance DATA (EOD / &ge;15 min, never real-time) &middot; UPDATES ON WORKFLOW RUNS, NOT TICKS &middot; NOT INVESTMENT ADVICE</div>
 <div id="suspend" class="banner crit hidden"></div>
-<main>
-<section id="A"><h2>A &middot; Account KPIs <span class="tag" id="kpilabel">FORWARD PAPER</span></h2><div id="kpis" class="cards"></div></section>
-
-<section id="B" class="wide"><h2>B &middot; Equity curve vs benchmark <span class="tag" id="benchname"></span></h2>
-  <div class="btns" id="ranges"></div><div id="eqchart" class="chart h300"></div>
-  <div class="sub">Drawdown %</div><div id="ddchart" class="chart h120"></div></section>
-
-<section id="C" class="wide"><h2>C &middot; Holdings <input class="filter" id="f_hold" placeholder="filter..."></h2><div id="holdings"></div></section>
-
-<section id="D" class="wide"><h2>D &middot; AI discovery (ranked) <input class="filter" id="f_disc" placeholder="filter..."> 
-  <select id="mkt"><option value="">All</option><option>BURSA</option><option>US</option></select>
-  <select id="decf"><option value="">All decisions</option><option>BUY</option><option>WATCH</option><option>REJECT</option></select></h2>
-  <div id="discovery"></div><div class="note">A score never buys by itself: BUY requires regime, trigger, trend template, risk budget, cash and data-freshness checks. Click a row for details.</div></section>
-
-<section id="E" class="wide"><h2>E &middot; Chart <span id="chartsym"></span> <span class="tag" id="chartlabel"></span></h2>
-  <div id="chartmeta" class="sub"></div><div id="cchart" class="chart h380"></div>
-  <div class="sub">RSI(14)</div><div id="rchart" class="chart h120"></div><div class="sub">MACD(12,26,9)</div><div id="mchart" class="chart h120"></div></section>
-
-<section id="F" class="wide"><h2>F &middot; Decision explanation</h2><div id="explain" class="mono">Select a symbol in D or C.</div></section>
-
-<section id="G" class="wide"><h2>G &middot; Transaction ledger (append-only) <a class="btn" href="data/ledger.csv">CSV</a></h2><div id="ledger"></div></section>
-
-<section id="H" class="wide"><h2>H &middot; Analytics</h2><div class="grid3">
-  <div><div class="sub">Monthly returns % (TWR)</div><div id="monthly" class="chart h160"></div></div>
-  <div><div class="sub">Weekly returns % (TWR)</div><div id="weekly" class="chart h160"></div></div>
-  <div><div class="sub">Fees &amp; slippage cumulative (RM)</div><div id="fees" class="chart h160"></div></div>
-  <div><div class="sub">Win / loss</div><div id="winloss"></div></div>
-  <div><div class="sub">P&amp;L by stock (RM)</div><div id="bystock"></div></div>
-  <div><div class="sub">Allocation (RM)</div><div id="alloc"></div></div></div>
-  <h3>Performance metrics</h3><div id="perf"></div></section>
-
-<section id="I"><h2>I &middot; Activity monitor <span class="tag" id="sse">static snapshot</span></h2><div id="monitor"></div><div id="feed" class="feed"></div></section>
-
-<section id="R"><h2>Daily report</h2><pre id="report" class="mono"></pre></section>
-
-<section id="J" class="wide"><h2>J &middot; Settings &amp; controls <span class="tag warn">DISABLED - READ-ONLY</span></h2><div id="settings"></div></section>
-
-<section id="K" class="wide"><h2>Backtest <span class="tag warn">HYPOTHETICAL - NOT FORWARD RESULTS</span> <button class="btn" id="btrun" disabled>Run backtest (disabled: read-only)</button></h2><div id="bt"></div></section>
-</main>
-<footer>Data: yfinance (free) - delayed/EOD, never real-time. Simulated fills only. Not investment advice. All times shown in MYT unless stated.</footer>
-<script src="app.js"></script></body></html>
+<nav id="tabs">
+  <a href="#overview" data-t="overview">Overview</a><a href="#discovery" data-t="discovery">Discovery</a><a href="#positions" data-t="positions">Positions</a>
+  <a href="#strategies" data-t="strategies">Strategies</a><a href="#research" data-t="research">AI research</a><a href="#activity" data-t="activity">Activity</a>
+  <a href="#validation" data-t="validation">Validation</a><a href="#controls" data-t="controls">Controls</a>
+</nav>
+<main id="view"></main>
+<footer>Data: yfinance (free) - delayed/EOD, never real-time. Simulated fills only. All schedule times shown in MYT (Asia/Kuala_Lumpur); internal calendar America/New_York. Not investment advice.
+ <a href="docs/STRATEGIES.md">Strategy docs</a> &middot; <a href="docs/SCORING.md">Scoring</a> &middot; <a href="data/ledger.csv">Ledger CSV</a></footer>
+<script src="controls.js"></script><script src="app.js"></script></body></html>

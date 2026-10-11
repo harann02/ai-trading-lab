@@ -1,78 +1,55 @@
-# AI Trading Lab - paper-trading platform (virtual RM10,000, **never real money**)
+# AI Trading Lab v2.0 - US-only paper trading (virtual RM10,000 -> USD, **never real money**)
 
-FastAPI + SQLite (append-only ledger) + APScheduler (separate persistent process) + dark-terminal dashboard (TradingView Lightweight Charts, vendored locally).
-Free data only: **yfinance** (Yahoo). Data is **EOD / delayed (>= ~15 min), never real-time**, and labeled so everywhere.
-No broker connection, no API keys, no secrets in the frontend. The system cannot place real orders.
+Engine: Python + SQLite append-only ledger. Dashboard: static site (GitHub Pages) **or** FastAPI self-host. Data: **free yfinance only (EOD / delayed, never real-time, labelled everywhere)**.
+No broker connection, no credentials in the repo or the frontend, the system cannot place real orders.
 
-## Install
+* Live site: https://harann02.github.io/ai-trading-lab/  (read-only for visitors; owner controls after entering a GitHub token in the browser)
+* Engine/ledger state lives on branch `data` (`ailab.db`, `control/commands.json`); code on `main`; GitHub Actions (`.github/workflows/run.yml`) runs scans/monitors and publishes the JSON snapshot to Pages.
+
+## What v2.0 is
+| Area | v2.0 behaviour (docs) |
+|---|---|
+| Market | **US only** (NASDAQ / NYSE / NYSE American). Bursa is retired: no screening, schedules, brokerage/lot rules, KLCI benchmark, UI selection or cron jobs. Old Bursa records are kept **read-only** (`archived_records`, `bursa_archive_decisions`, pre-migration DB copy in `archive/`). |
+| Universe | Discovered automatically: S&P 500 (Wikipedia) + Nasdaq-100 (Nasdaq API, Wikipedia fallback) + Nasdaq Trader exchange directory; cached; filters: exchange, no ETFs/test issues, price >= $10, 50d avg volume >= 1M, 20d dollar volume >= $20M, vol sanity 5-150% annualised, >= 252 bars. Nothing is hard-coded as a recommendation. Rejections and reasons are stored (`universe_members`). |
+| Money | Start **RM10,000** (ledger DEPOSIT in MYR). The treasury is converted to USD sleeves at a **recorded real USDMYR=X rate + configurable spread (default 30 bps)**; each conversion is a ledger row + `fx_conversions` audit row. Display uses mid (never charges spread). Stock return vs currency gain/loss are reported separately. See `docs/ACCOUNTING.md`. |
+| Cash rules | Whole shares by default (`fractional_shares` off), cash-account mode, T+1 settlement (NYSE calendar), unsettled proceeds not reusable (configurable), US fees: $0 commission (configurable) + SEC fee and FINRA TAF on sells, modelled half-spread by liquidity tier + slippage. |
+| Strategies | Independent engines with their own capital sleeve, strategy_id on decisions/orders/fills, own metrics: **A swing** (30%), **C mean reversion** (30%), **D buy&hold SPY/QQQ baseline** (40%), **B intraday** (0%, DISABLED, research only). `docs/STRATEGIES.md`. |
+| Providers | `yfinance` (full), `alpaca` and `polygon` adapters (activate only with env keys, capabilities probed; **UNTESTED here: no keys**). Missing capability => strategy auto-disabled; stale data blocks trading. `docs/DATA_PROVIDERS.md`. |
+| AI layer | Explains verified data only; never decides. Providers by env (`XAI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`, any OpenAI-compatible endpoint via `AITL_LLM_API_KEY`+`AITL_LLM_BASE_URL`, free GitHub Models via `GITHUB_TOKEN`); otherwise template text labelled "template, no LLM". Every prompt/response/source is logged (`llm_log`); numbers in LLM output are verified against the source. |
+| Dashboard | Dark terminal, responsive; KPI cards, discovery table (sort/search/filter), stock page (candles, SMA/VWAP-proxy/RSI/MACD, trade markers, score breakdown, memo), positions, strategies, research feed, activity monitor, validation lab, owner controls. US schedule shown in MYT. |
+| Controls | `docs/CONTROLS.md`: owner token (sessionStorage only) -> Contents API writes `control/commands.json` on `data` -> `workflow_dispatch` -> engine validates, applies, audits -> page auto-polls. **Not real time: updates happen on workflow runs.** |
+
+## Quick start (local)
 ```bash
-cd /workspace/ai-trading-lab
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m pytest -q          # 32+ tests, all must pass
+.venv/bin/python -m pytest -q                       # full suite (legacy v1 tests + v2 tests)
+AITL_DB=data/ailab.db .venv/bin/python ci_run.py scan      # one real scan (network, yfinance)
+.venv/bin/python export_static.py site && python3 -m http.server -d site 8000   # view the static dashboard
+DASH_USER=me DASH_PASS=... .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8765   # FastAPI self-host
 ```
+`python run_validation.py` re-runs the historical comparison (analysis only; writes `validation/results.json`).
 
-## Run (two independent processes)
-```bash
-./run.sh                 # starts web (http://127.0.0.1:8765) + scheduler with nohup; ./run.sh stop to stop
-# or manually:
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8765     # web/API/dashboard
-.venv/bin/python scheduler.py                                    # persistent scheduler (works with the browser closed)
-```
-CLI: `python cli.py scan [BURSA|US]` (one real scan), `python cli.py monitor`, `python cli.py backtest`, `python cli.py report`.
-Dashboard binds to 127.0.0.1 and **every route requires HTTP Basic auth** (`DASH_USER`/`DASH_PASS` from the environment or `.env`, chmod 600, never in frontend code; the server answers 503 if they are unset). The scheduler is a separate process and is unaffected. Still prefer an SSH tunnel or HTTPS reverse proxy for remote access.
-
-**v1.1.0 (small-account tuning):** `min_trade_value_myr` 1600 (RM8 min brokerage <= 0.5%), `weekly_entries_only` (entries/SMA50 exits only on the week's closing session), ATR trailing stop 4.0x, buy score 70, chosen on train/validation only; the test window was evaluated once (see `backtests` table id 2; id 1 = v1.0.0 kept untouched).
-
-### Persistent server (systemd)
-```bash
-sudo cp deploy/*.service /etc/systemd/system/      # edit WorkingDirectory/ExecStart paths if you move the project
-sudo systemctl daemon-reload
-sudo systemctl enable --now ai-trading-lab-web ai-trading-lab-scheduler
-journalctl -u ai-trading-lab-scheduler -f
-```
-The scheduler stores jobs in `data/scheduler.db` (SQLAlchemy job store), coalesces missed runs and fires missed jobs within a 3h grace window after a restart.
-The dashboard shows scheduler health (heartbeat every 30 s; DOWN if >120 s old) and next run times.
-
-### Schedule (all jobs guard on the exchange calendar)
-| Job | When | What |
+## Schedule (GitHub Actions; cron is best effort, minimum 5 min)
+| Job | When (UTC) | MYT |
 |---|---|---|
-| scan_bursa | Mon-Fri 17:30 MYT (Bursa closes 17:00) | collect, regime, screen, rank, validate, create pending orders, EOD reconcile, daily report |
-| scan_us | Tue-Sat 05:30 MYT (NYSE closes 04:00/05:00 MYT depending on DST) | same for US session of the previous US day |
-| monitor_bursa | Mon-Fri every 10 min, 09:00-17:50 MYT | **only if Bursa is open**: fetch delayed bars, fill pending orders at the session open, intraday stop checks |
-| monitor_us | Mon-Fri every 10 min, 09:00-16:50 New York time | same for NYSE |
-| weekly_review | Sat 09:00 MYT | weekly review report |
-| heartbeat | every 30 s | scheduler health |
+| scan | 21:30 Mon-Fri | 05:30 Tue-Sat (after the NYSE close in both EDT and EST) |
+| monitor | every 15 min 13:00-20:59 Mon-Fri (guarded: acts only if NYSE is open) | covers 21:00-04:59 MYT |
+| weekly report | Sat 02:00 | Sat 10:00 |
+| manual / owner-control | `workflow_dispatch` | any time |
+Bursa jobs were removed. The schedule is decided by the NYSE calendar (America/New_York, DST, holidays, early closes via `pandas_market_calendars`).
 
-Execution model: scans run after the close and create **pending** orders; they are filled at the **next session's open** (+slippage, fees) only while the exchange is open
-and today's (delayed) bar exists. Stops are checked intraday and at EOD; a stop is filled at the stop price, or at the **open if the price gapped through it**.
+## Execution model
+Scans run after the close and create **pending** orders; they fill at the **next session's open** (+modelled spread/slippage/fees) only while NYSE is open and today's (delayed) bar exists. Stops are checked intraday on the delayed bar's low; a gap through a stop fills at the open. Every gate is re-checked at fill time.
 
-## Configuration
-Everything is editable in the dashboard (section J) or via `PUT /api/settings`; defaults live in `app/config.py`: capital, markets, watchlists (Bursa `.KL`, US), benchmarks
-(^KLSE, SPY), risk 1%/trade, max 20%/stock, 80% exposure, 20% min cash, 5 positions, 10% max drawdown (suspends new entries until you click *Authorize resume*),
-ATR stop multiple, fees (Bursa brokerage 0.10% min RM8, clearing 0.03%, stamp RM1/RM1000; US $0.005/share min $1 + SEC fee on sells; 10 bps FX spread), slippage (10 bps Bursa / 5 bps US),
-lot sizes (100 / 1), risk-free rate (3% p.a. for Sharpe/Sortino), auto-trade ON/OFF and manual-approval mode.
-Environment: `AITL_DB` overrides the SQLite path (default `data/ailab.db`).
+## Risk defaults
+1% risk/trade, 20% single stock, 80% max exposure, 20% cash reserve, 5 positions, 10% drawdown suspension (manual resume), 2% intraday daily-loss breaker, no leverage/shorts/derivatives.
+Size = floor(risk budget / (entry - stop + exit friction)) capped by affordability (SETTLED cash after reserve), allocation, exposure, liquidity (5% ADV).
 
-## Data honesty rules
-* A symbol is tradable only if its last **final** daily bar equals the exchange's last completed session, has >= 210 bars and sane OHLC. Otherwise: flagged STALE/MISSING/INSUFFICIENT/ANOMALY, decision = REJECT "DATA BLOCKED", no order. Stale data is never substituted.
-* If the database has no live bars at all the UI is in **DEMO** mode (banner); synthetic data is only generated for chart display, never stored as prices, and trading is disabled.
-* Fundamentals/analyst targets come from `yfinance .info` (cached 7 days, may be missing or wrong); missing data is penalized/flagged, never invented. No news is used.
-* Labels: **FORWARD PAPER** (live simulated), **BACKTEST** (historical hypothetical), no other results are claimed.
+## Honesty rules
+Delayed yfinance data (unofficial; can be wrong). Fills are simulated. Backtests are labelled BACKTEST and never combined with forward paper results. Survivorship bias and missing point-in-time fundamentals are disclosed (`docs/VALIDATION.md`). Blockers needing credentials/paid feeds are listed in `docs/DATA_PROVIDERS.md`.
 
 ## Ledger & audit
-`ledger` is append-only (SQLite triggers reject UPDATE/DELETE). Cash, positions, realized P&L, the equity curve and daily reports are all derived from it
-(daily report hash is reproducible). Every BUY stores: algorithm version, input snapshot (indicator values, fundamentals, FX, regime, data status), factor scores, checks, decision, order, fill, and an investment memo.
-Idempotency: `decisions.decision_key` and `orders.decision_key` are UNIQUE (algo:market:session:symbol:last_bar), fills are unique per order; re-running scans/refreshing never duplicates orders.
-"Full reset" archives the old DB to `data/archive/` (the ledger itself is never edited).
+`ledger` is append-only (SQLite triggers reject UPDATE/DELETE). Cash, positions, P&L, equity curves are derived from it. Decisions/orders/fills are idempotent (UNIQUE keys); re-running scans never duplicates. Schema changes use forward-only migrations (`app/migrations.py`) with a DB copy archived first. Settings changes and control commands are in `audit_log` / `control_applied`.
 
 ## Docs
-`docs/SCORING.md` - every factor normalization, regime rule, rule sets, sizing. `app/backtest.py` docstring - backtest design and caveats.
-
-## Tests
-`pytest` covers: RM10,000 credit, cash after buy incl. fees, realized P&L on sell, equity = cash + MTM, persistence across process restart, risk/capital limits, duplicate-signal idempotency,
-closed-market blocking, missing/stale data => no trade, report reproducibility, no look-ahead (features, signals, backtest entries), indicators (RSI Wilder, ATR, MACD, SMA/EMA, R:R, sizing, fees),
-gap-through-stop, drawdown suspension + manual resume, manual-approval gate, regime, fundamentals-missing rule, TWR/MWR with flows.
-
-## Known limitations
-See bottom of the report in the project hand-off; in short: yfinance is unofficial/delayed/occasionally wrong, Bursa holiday data is best-effort (pandas_market_calendars XKLS + Malaysia public holidays, conservative union),
-backtest has survivorship bias and no point-in-time fundamentals, no LLM is wired in (template text only), the tiny RM10k account makes Bursa minimum brokerage (RM8/side) a large cost drag, and nothing here is investment advice.
+`docs/SCORING.md` (score + regime + rule math) - `docs/STRATEGIES.md` - `docs/ACCOUNTING.md` - `docs/DATA_PROVIDERS.md` - `docs/CONTROLS.md` - `docs/VALIDATION.md` - `docs/DEPLOY_SELFHOST.md`.

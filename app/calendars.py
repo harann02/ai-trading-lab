@@ -80,3 +80,52 @@ def market_status(market, now=None) -> dict:
             "next_session": str(nxt[0]) if nxt else None,
             "next_open_utc": nxt[1].isoformat() if nxt else None,
             "last_completed_session": str(last_completed_session(market, now))}
+
+# ------------------------------------------------------------------ v2: US-only helpers (internal calendar = America/New_York, display = MYT)
+MYT = ZoneInfo("Asia/Kuala_Lumpur")
+NY = ZoneInfo("America/New_York")
+
+def add_sessions(d: date, n: int) -> date:
+    """d + n NYSE sessions (n>=0). Used for T+1 settlement dates (holidays/weekends skipped)."""
+    s = schedule("US", d + timedelta(days=1), d + timedelta(days=14 + 2 * n))
+    return s.index[n - 1].date() if n > 0 else d
+
+def session_info(d: date) -> dict | None:
+    """Open/close of a NYSE session in NY and MYT, with early-close detection (regular close = 16:00 ET)."""
+    h = session_hours("US", d)
+    if not h: return None
+    o, c = h; cny = c.astimezone(NY)
+    return {"date": str(d), "open_ny": o.astimezone(NY).strftime("%H:%M"), "close_ny": cny.strftime("%H:%M"),
+            "open_myt": o.astimezone(MYT).strftime("%Y-%m-%d %H:%M"), "close_myt": c.astimezone(MYT).strftime("%Y-%m-%d %H:%M"),
+            "early_close": (cny.hour, cny.minute) != (16, 0), "utc_offset_ny_hours": o.astimezone(NY).utcoffset().total_seconds() / 3600}
+
+def us_status(now=None) -> dict:
+    """Full US market status for the dashboard. All instants also given in MYT."""
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None: now = now.replace(tzinfo=timezone.utc)
+    d = local_now("US", now).date(); today = session_info(d); nxt = current_or_next_session("US", now)
+    isopen = is_open("US", now)
+    if isopen: phase = "OPEN"
+    elif today and now < session_hours("US", d)[0]: phase = "PRE-MARKET (closed for regular trading)"
+    elif today: phase = "AFTER-HOURS (closed)"
+    else: phase = "CLOSED (weekend/holiday)"
+    nd = nxt[0] if nxt else None
+    return {"open": isopen, "phase": phase, "now_ny": now.astimezone(NY).strftime("%Y-%m-%d %H:%M %Z"), "now_myt": now.astimezone(MYT).strftime("%Y-%m-%d %H:%M MYT"),
+            "today_session": today, "next_session": session_info(nd) if nd else None,
+            "last_completed_session": str(last_completed_session("US", now)),
+            "next_close_myt": (nxt[2].astimezone(MYT).strftime("%Y-%m-%d %H:%M MYT") if nxt else None),
+            "next_open_myt": (nxt[1].astimezone(MYT).strftime("%Y-%m-%d %H:%M MYT") if nxt else None),
+            "calendar": "pandas_market_calendars NYSE (America/New_York, DST, holidays, early closes)"}
+
+def upcoming_special_days(start: date, days=60) -> list:
+    """Holidays (weekday with no session) and early closes in the next `days` days."""
+    sch = schedule("US", start, start + timedelta(days=days)); out = []
+    have = {i.date() for i in sch.index}
+    d = start
+    while d <= start + timedelta(days=days):
+        if d.weekday() < 5 and d not in have: out.append({"date": str(d), "type": "holiday (NYSE closed)"})
+        d += timedelta(days=1)
+    for i in sch.index:
+        si = session_info(i.date())
+        if si and si["early_close"]: out.append({"date": str(i.date()), "type": f"early close {si['close_ny']} ET = {si['close_myt'][-5:]} MYT"})
+    return sorted(out, key=lambda x: x["date"])
