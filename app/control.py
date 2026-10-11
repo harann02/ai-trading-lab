@@ -63,6 +63,7 @@ def apply_file(path, now=None):
     """Reads control/commands.json; applies new settings revision + unseen commands. Returns summary list. Never raises on bad input."""
     out = []; p = Path(path)
     if not p.exists(): return out
+    if not p.read_text().strip(): return out                         # empty placeholder file = nothing to apply
     try: doc = json.loads(p.read_text())
     except Exception as e: db.audit("control_file_invalid", str(e), "unknown", "control"); return [{"error": f"invalid JSON: {e}"}]
     actor = str(doc.get("updated_by", "owner"))[:40]

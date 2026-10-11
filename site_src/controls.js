@@ -25,7 +25,8 @@ const Controls = (() => {
   async function readDoc() {
     const r = await gh('/repos/' + repo() + '/contents/' + (meta().control_path || 'control/commands.json') + '?ref=' + (meta().control_branch || 'data'), { ok404: true });
     if (r.status === 404) { st.sha = null; st.doc = { version: 1, settings_rev: null, settings: {}, commands: [] }; return; }
-    const j = await r.json(); st.sha = j.sha; st.doc = JSON.parse(unb64(j.content));
+    const j = await r.json(); st.sha = j.sha; let txt = unb64(j.content || '').trim(); let d = {}; try { d = txt ? JSON.parse(txt) : {}; } catch (e) { d = {}; }
+    st.doc = { version: 1, settings_rev: null, settings: {}, commands: [], ...d };
   }
   async function writeDoc(doc, message) {
     doc.updated_by = st.login; doc.updated_at = new Date().toISOString(); doc.version = 1; doc.commands = (doc.commands || []).slice(-50);

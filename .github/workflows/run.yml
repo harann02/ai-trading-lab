@@ -93,7 +93,7 @@ jobs:
             git fetch -q origin data:refs/remotes/origin/data
             HEAD_SHA=$(git rev-parse origin/data)
             # the owner may have written control/commands.json while we ran: the remote copy wins
-            mkdir -p control; git show origin/data:control/commands.json > control/commands.json 2>/dev/null || true
+            mkdir -p control; if git cat-file -e origin/data:control/commands.json 2>/dev/null; then git show origin/data:control/commands.json > control/commands.json; fi
             git checkout -q --orphan tmp-data-$i
             git add -A
             git commit -qm "ledger snapshot ${GITHUB_RUN_ID} ($(date -u +%FT%TZ))"

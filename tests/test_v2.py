@@ -342,3 +342,6 @@ def test_intraday_disabled_without_genuine_feed(env2, monkeypatch):
     st = intraday.status(config.DEFAULTS, [cr]); assert st["live_enabled"] is False
     cfg = {**config.DEFAULTS, "strategies": {**config.DEFAULTS["strategies"], "intraday": {"enabled": True, "allocation_pct": 0.0}}}
     st2 = intraday.status(cfg, [cr]); assert st2["live_enabled"] is False
+
+def test_empty_control_file_is_ignored(env2, tmp_path):
+    f = tmp_path / "commands.json"; f.write_text(""); assert control.apply_file(str(f), NOW_SCAN) == []
