@@ -73,6 +73,7 @@ def test_migration_keeps_history_and_archives_bursa(tmp_path, monkeypatch):
     assert c.execute("SELECT COUNT(*) FROM archived_records WHERE table_name='ledger'").fetchone()[0] == 1
     arch = [f for f in os.listdir(tmp_path / "archive")]; assert arch
     a = sqlite3.connect(tmp_path / "archive" / arch[0]); assert a.execute("SELECT COUNT(*) FROM ledger").fetchone()[0] == 2
+    assert c.execute("SELECT name FROM sqlite_master WHERE name='scan_results'").fetchone()                                    # tables the exporter needs exist right after migration
     assert migrations.apply_all(str(p)) == []                                                      # idempotent
     with pytest.raises(sqlite3.DatabaseError): c.execute("DELETE FROM ledger WHERE id=1")         # append-only trigger still active
     c.close()

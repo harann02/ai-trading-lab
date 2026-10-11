@@ -44,6 +44,7 @@ def m2_v2_core(c):
     CREATE TABLE IF NOT EXISTS settings_archive(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, version TEXT, key TEXT, value TEXT);
     CREATE TABLE IF NOT EXISTS archived_records(table_name TEXT, row_id INTEGER, reason TEXT, archived_at TEXT, PRIMARY KEY(table_name,row_id));
     CREATE TABLE IF NOT EXISTS experiments(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, kind TEXT, label TEXT, result TEXT);
+    CREATE TABLE IF NOT EXISTS scan_results(scan_date TEXT, strategy_id TEXT, ts TEXT, payload TEXT, PRIMARY KEY(scan_date,strategy_id));
     CREATE VIEW IF NOT EXISTS bursa_archive_decisions AS SELECT * FROM decisions WHERE market='BURSA';
     """)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
