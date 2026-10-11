@@ -43,7 +43,7 @@ def _call(p, system, user, max_tokens=700, timeout=45):
                       json={"model": p["model"], "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "max_tokens": max_tokens, "temperature": 0.2})
     r.raise_for_status(); return r.json()["choices"][0]["message"]["content"]
 
-_ACTIVE = {}
+_ACTIVE = {}; LAST_ERRS = []
 def active_provider(env=None, cfg=None, force=False):
     """First candidate whose tiny test call succeeds. Cached per process. Returns provider dict (without leaking the key in logs) or None."""
     k = json.dumps(sorted((env if env is not None else os.environ).keys() & {v[0] for v in PROVIDERS}))
@@ -52,7 +52,7 @@ def active_provider(env=None, cfg=None, force=False):
     for p in candidates(env, cfg):
         try: _call(p, "Reply with the single word OK.", "ping", max_tokens=5, timeout=25); chosen = p; break
         except Exception as e: errs.append(f"{p['name']}: {str(e)[:80].replace(p['key'], '***')}")
-    _ACTIVE[k] = chosen; _ACTIVE[k + ":errs"] = errs
+    _ACTIVE[k] = chosen; _ACTIVE[k + ":errs"] = errs; globals()["LAST_ERRS"] = errs
     return chosen
 
 def status(env=None, cfg=None):
@@ -138,7 +138,7 @@ def explain(kind, symbol, facts: dict, instruction: str, env=None, cfg=None, tem
             lid = log_llm(kind, symbol, p, "llm", prompt, src, out, True); return out.strip() + f"\n[LLM: {p['name']}/{p['model']} - explanation only; rules engine decided]", "llm", lid
         except Exception as e:
             lid = log_llm(kind, symbol, p, "llm_error", prompt, src, "", False, str(e)[:200].replace(p["key"], "***")); return tmpl, "template (LLM call failed)", lid
-    lid = log_llm(kind, symbol, None, "template", prompt, src, tmpl, True); return tmpl, "template", lid
+    why = ("; ".join(LAST_ERRS)[:400] if candidates(env, cfg) else "no LLM API key configured"); lid = log_llm(kind, symbol, None, "template", prompt, src, tmpl, True, why); return tmpl, "template", lid
 
 MEMO_INSTR = ("Write a short investment-research memo (max ~170 words) for this PAPER trade candidate: thesis from bullish evidence, risks from bearish evidence, the plan "
               "(stop/target/size/max loss in USD and MYR/R:R), the execution status, and one line citing the data sources and timestamps (including any headline with its timestamp). Plain text.")

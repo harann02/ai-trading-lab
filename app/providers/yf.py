@@ -43,6 +43,18 @@ class YFinanceProvider(_data.YFProvider, Provider):
             if isinstance(ts, (int, float)): ts = datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds")
             pub = ((c.get("provider") or {}).get("displayName")) or n.get("publisher")
             if title: out.append({"title": title, "published": ts, "publisher": pub, "source": "yfinance news"})
+        if not out:                                   # yfinance .news is frequently empty: free Yahoo Finance RSS headline feed as fallback (timestamped, same publisher family)
+            try:
+                import requests, xml.etree.ElementTree as ET
+                from email.utils import parsedate_to_datetime
+                r = requests.get(f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US", headers={"User-Agent": "Mozilla/5.0"}, timeout=15); r.raise_for_status()
+                for it in ET.fromstring(r.content).iter("item"):
+                    t = (it.findtext("title") or "").strip(); pd_ = it.findtext("pubDate")
+                    try: ts = parsedate_to_datetime(pd_).astimezone(timezone.utc).isoformat(timespec="seconds")
+                    except Exception: ts = pd_
+                    if t: out.append({"title": t, "published": ts, "publisher": "Yahoo Finance RSS", "source": "yahoo finance rss"})
+                    if len(out) >= limit: break
+            except Exception: pass
         return out
     def earnings(self, symbol):
         import yfinance as yf

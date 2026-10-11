@@ -15,6 +15,9 @@ def main(a):
         res = control.apply_file(os.path.join(cdir, "commands.json"), now)
         if res: changed = True; print("control:", json.dumps(res, default=str)[:600])
     prov = YFinanceProvider()
+    try:
+        from app import ai; st = ai.status(); print("AI layer:", json.dumps(st)); db.event("INFO", "ai", "LLM status: " + json.dumps(st)[:400])
+    except Exception as e: print("AI status failed", e)
     if a in ("scan", "scan_all"):
         s = trading.run_scan(prov, now); changed = True
         print(json.dumps({k: v for k, v in s.items() if k not in ("capabilities",)}, default=str)[:1500])
