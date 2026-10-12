@@ -30,7 +30,7 @@ def main(action, dbstore, site):
         if rc != 0 and not o: print("::error::engine crashed before reporting"); out(changed="false", engine_status="failed", persisted="false"); return 1
         if not changed:
             out(changed="false", engine_status=est, persisted="false"); return 0
-        if run_py(["export_static.py", site], {**envx, "AITL_TRIGGER": f"{os.environ.get('GITHUB_EVENT_NAME','manual')}:{action}"}) != 0: print("::warning::export_static failed")
+        if run_py(["export_static.py", site], {**envx, "AITL_TRIGGER": f"{{'external_scheduler' if os.environ.get('GITHUB_EVENT_NAME') == 'repository_dispatch' else os.environ.get('GITHUB_EVENT_NAME','manual')}:{action}"}) != 0: print("::warning::export_static failed")
         persist.stash_db(os.path.join(dbstore, "ailab.db"), stash)
         try:
             man = persist.publish(dbstore, stash, base, run_id=os.environ.get("GITHUB_RUN_ID", "local") + "-" + os.environ.get("GITHUB_RUN_ATTEMPT", "1"))
