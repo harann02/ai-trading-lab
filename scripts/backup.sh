@@ -9,4 +9,4 @@ s = sqlite3.connect(sys.argv[1]); d = sqlite3.connect(sys.argv[2]); s.backup(d)
 ok = d.execute("PRAGMA integrity_check").fetchone()[0]; n = d.execute("SELECT COUNT(*) FROM ledger").fetchone()[0]
 print(f"backup ok integrity={ok} ledger_rows={n}"); sys.exit(0 if ok == "ok" else 1)
 PY
-sha256sum "$OUT" | tee "$OUT.sha256"; echo "$OUT"
+(cd "$DEST" && sha256sum "$(basename "$OUT")" | tee "$(basename "$OUT").sha256"); echo "$OUT"
