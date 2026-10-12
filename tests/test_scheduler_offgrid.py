@@ -77,3 +77,7 @@ def test_ci_run_auto_external_records_trigger_class(env2, monkeypatch):
     monkeypatch.setattr(S, "monitor_window", lambda now: (False, None, None, None, "outside test"))
     ci_run.main("auto"); c = db.conn(); r = c.execute("SELECT trigger, job FROM job_runs WHERE run_id='9191'").fetchall(); c.close()
     assert r and all(x["trigger"] == "external_scheduler" for x in r) and all(x["job"] == "monitor" for x in r)
+
+def test_all_tools_compile():
+    import py_compile, glob
+    for f in glob.glob(os.path.join(ROOT, "tools", "*.py")) + [os.path.join(ROOT, "ci_run.py"), os.path.join(ROOT, "export_static.py")]: py_compile.compile(f, doraise=True)
