@@ -4,6 +4,7 @@ import json
 import numpy as np, pandas as pd
 from .. import db, config, data, ledger, risk, scoring, calendars as cal, engine, reports
 from . import common as C
+from .. import affordability as AFF
 
 SID = "swing"; VERSION = "swing-2.0.0"; NAME = "Momentum & Swing"
 REQUIRES = ["eod"]
@@ -36,6 +37,8 @@ def decide(s, c, ctx):
         sz = C.size_for(cfg, snap, SID, plan["entry"], plan["stop"], f); qty = sz["qty"]
         minq = 0.0001 if cfg["fractional_shares"] else 1
         C.chk(checks, "position_size>=1_share", qty >= minq, f"qty {qty} (binding cap: {sz['binding']}; caps {sz['detail'].get('caps')})")
+        acode, adet = AFF.classify(sz, minq); cap_usd = (snap["equity_usd"] or 0) * cfg["max_position_pct"] / 100
+        C.chk(checks, "affordability_gate", acode == "AFFORDABLE", AFF.explain(acode, adet, cap_usd))      # small-account gate with a reason code (never relaxes a limit)
         C.common_checks(checks, cfg, snap, SID, s, qty, plan["entry"], ctx.n_pos, ctx.held_syms(SID), ctx.pend_syms(SID), cfg["entries_suspended"])
         adv = C.adv_usd(f) or 0
         C.chk(checks, "execution_quality", adv >= cfg["universe_filters"]["min_adv_usd"] and f["atr_pct"] <= 0.08, f"ADV ${adv:,.0f} (min ${cfg['universe_filters']['min_adv_usd']:,.0f}), ATR% {f['atr_pct']*100:.2f} (max 8)")
@@ -56,6 +59,19 @@ def decide(s, c, ctx):
                        "canslim": comp["canslim"], "graham": comp["graham"]}, "snapshot": snap_out, "explanation": expl}
 
 def _f(x): return None if x is None or (isinstance(x, float) and np.isnan(x)) else float(x)
+
+def _affordable_universe(ctx, cands):
+    """Daily 'affordable universe' count: every evaluated candidate is sized with the REAL account (whole shares) and, informationally, with fractional shares ON (a what-if; fractional stays OFF)."""
+    cfg = ctx.cfg; snap = ctx.snap; eq = snap["equity_usd"] or 0; cfg_frac = {**cfg, "fractional_shares": True}; codes = []; frac_ok = 0
+    for score, s, c in cands:
+        f = c["f"]
+        if pd.isna(f.get("atr14", np.nan)): codes.append("UNAFFORDABLE_INVALID_STOP"); continue
+        plan = scoring.plan_levels(f, cfg, None)
+        if not plan: codes.append("UNAFFORDABLE_INVALID_STOP"); continue
+        sz = C.size_for(cfg, snap, SID, plan["entry"], plan["stop"], f); code, _ = AFF.classify(sz, 1); codes.append(code)
+        if code != "AFFORDABLE" and C.size_for(cfg_frac, snap, SID, plan["entry"], plan["stop"], f)["qty"] >= 0.0001: frac_ok += 1
+        elif code == "AFFORDABLE": frac_ok += 1
+    AFF.record_daily(ctx.sd, SID, eq, eq * cfg["max_position_pct"] / 100, eq * cfg["risk_per_trade_pct"] / 100, codes, frac_ok, ctx.now)
 
 def scan(ctx):
     """Rank whole universe, fundamentals for the top-N only, persist decisions for held + eligible + top-K, create pending orders for BUY ELIGIBLE (best first)."""
@@ -78,6 +94,8 @@ def scan(ctx):
             comp["flags"].append("fundamentals not fetched for this symbol (outside top-N shortlist): weights renormalized")
         cands.append((comp["score"], s, {"f": f, "fund": fund, "comp": comp, "st": ctx.status[s]}))
     cands.sort(key=lambda x: -x[0]); saved = 0
+    try: _affordable_universe(ctx, cands)
+    except Exception as e: db.event("WARN", "affordability", f"affordable-universe count failed: {e}")
     for score, s, c in cands:
         if s in held:
             d = hold_or_exit(s, c, ctx)

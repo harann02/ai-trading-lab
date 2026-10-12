@@ -25,6 +25,7 @@ def build(cfg=None, now=None):
     safe("data_requests", lambda: provenance.recent(25)); safe("daily_reports", lambda: daily_report.latest(10)); safe("weekly_eval", lambda: _latest_report("weekly_eval"))
     safe("jobs", lambda: _rows("SELECT job,trigger,scheduled_for,started_ts,finished_ts,status,skip_reason,error,run_id FROM job_runs ORDER BY id DESC LIMIT 60"))
     safe("market_data", lambda: S.data_freshness(now, cfg))
+    safe("affordability", lambda: __import__("app.affordability", fromlist=["x"]).latest(10))
     out["labels"] = provenance.LABELS
     out["security"] = {"pages": "READ-ONLY static snapshot. No token input exists on this site.", "writer_mode": jobs.writer_mode(), "owner_controls": ["GitHub Actions 'Run workflow' inputs (settings_json / command_json)", "edit control/commands.json on branch data (GitHub web UI)", "self-hosted authenticated FastAPI dashboard (writer_mode=selfhosted)"]}
     return out

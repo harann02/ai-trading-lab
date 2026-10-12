@@ -97,10 +97,15 @@ function drawEquity() {
 }
 
 /* ---------------- discovery ---------------- */
+function affNote() {
+  const a = (((S.d.v3 || {}).affordability) || [])[0]; if (!a) return '<div class="note" id="affnote">Affordable universe: not computed yet (appears after the next scan). "No affordable valid trade" is a legitimate decision: cash is an acceptable outcome.</div>';
+  const codes = Object.entries(a.by_code || {}).filter(([k]) => k !== 'AFFORDABLE').map(([k, n]) => esc(k) + ' ×' + n).join(' · ');
+  return `<div class="note" id="affnote"><b>Affordable universe (scan ${esc(a.scan_date)}): ${a.affordable} of ${a.evaluated}</b> candidates can be bought at whole-share size within the account's limits (equity US$${fmt(a.equity_usd, 0)}, single-stock cap US$${fmt(a.cap_usd, 0)}, 1% risk budget US$${fmt(a.risk_budget_usd, 0)}). Not affordable: ${codes || 'none'}. What-if fractional shares (OFF, not enabled): ${a.fractional_affordable ?? '–'}. "No affordable valid trade" is a legitimate decision: cash is an acceptable outcome.</div>`;
+}
 function viewDiscovery(root) {
   const d = S.d.discovery || { rows: [] }, u = S.d.universe || {};
   root.innerHTML = `<section class="wide"><h2>Auto-discovered US universe <span class="tag">${u.passed}/${u.candidates} passed filters</span> <span class="tag">scan ${esc(d.scan_date)}</span></h2>
-  <div class="note">${esc(u.method || '')}</div>
+  <div class="note">${esc(u.method || '')}</div>${affNote()}
   <div class="row"><input id="q" class="filter" placeholder="search ticker / name"><select id="fs"><option value="">any swing status</option><option>BUY ELIGIBLE</option><option>WATCH</option><option>HOLD</option><option>EXIT</option><option>REJECT</option></select>
   <select id="fm"><option value="">any mean-rev status</option><option>BUY ELIGIBLE</option><option>WATCH</option><option>HOLD</option><option>EXIT</option><option>REJECT</option></select>
   <label class="dim">min swing score <input id="ms" type="number" value="0" style="width:60px"></label><span class="dim" id="cnt"></span></div><div id="dt"></div>
