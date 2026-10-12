@@ -98,6 +98,10 @@ jobs:
         env:
           AITL_DB: ${{ github.workspace }}/dbstore/ailab.db
           AITL_TRIGGER: ${{ github.event_name }}:${{ steps.act.outputs.action }}
+          AITL_ALLOW_KEYLESS: ${{ vars.AITL_ALLOW_KEYLESS || '1' }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python export_static.py site
       - name: Persist ledger DB + control file to branch data (single squashed commit, race-safe)
