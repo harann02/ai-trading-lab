@@ -1,18 +1,24 @@
 name: scan-monitor-deploy
 on:
   schedule:
-    - cron: "30 21 * * 1-5"       # US scan: 21:30 UTC = 05:30 MYT Tue-Sat (after the NYSE close in both EDT and EST)
-    - cron: "*/15 13-20 * * 1-5"  # US monitor every ~15 min during US hours (13:00-20:59 UTC covers EDT+EST; guarded by the NYSE calendar; GitHub cron is best-effort)
-    - cron: "0 2 * * 6"           # weekly strategy report Sat 10:00 MYT
+    - cron: "30 21 * * 1-5"       # US scan: 21:30 UTC = 05:30 MYT Tue-Sat (after the NYSE close in both EDT (20:00 UTC) and EST (21:00 UTC))
+    - cron: "*/15 13-21 * * 1-5"  # monitor: 13:00-21:59 UTC covers the FULL regular session in EDT (13:30-20:00) and EST (14:30-21:00) incl. post-close; tools/gate.py guards it with the NYSE calendar (holidays, early closes)
+    - cron: "0 2 * * 6"           # weekly strategy + evaluation report Sat 10:00 MYT
   workflow_dispatch:
     inputs:
       action:
         description: "scan | monitor | control | weekly | export"
         default: "scan"
+      settings_json:
+        description: 'OWNER CONTROL (optional): JSON settings patch, e.g. {"max_positions": 4}. Validated + audited by the engine. Only users with write access can run this workflow.'
+        default: ""
+      command_json:
+        description: 'OWNER CONTROL (optional): JSON command, e.g. {"type":"decide_migration_proposal","proposal_id":1,"decision":"KEEP"} or {"type":"reactivate_strategy","strategy":"meanrev","confirm":"I APPROVE REACTIVATION"}'
+        default: ""
   push:
     branches: [main]
-    paths: ["site_src/**", "export_static.py", "ci_run.py", ".github/workflows/**", "app/**", "tests/**", "requirements.txt", "docs/**"]
-# Bursa jobs were REMOVED in v2.0 (US-only). One run at a time: the ledger DB lives on branch `data`.
+    paths: ["site_src/**", "export_static.py", "ci_run.py", ".github/workflows/**", "app/**", "tools/**", "tests/**", "requirements.txt", "docs/**"]
+# One run at a time: the ledger DB lives on branch `data`. DB-level idempotency keys + writer lease are the second and third lines of defence.
 concurrency:
   group: ailab-ledger
   cancel-in-progress: false
@@ -20,8 +26,9 @@ permissions:
   contents: write
   pages: write
   id-token: write
-  models: read       # lets GITHUB_TOKEN call GitHub Models (free LLM tier) for AI memos
+  models: read
   actions: write
+  issues: write
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -35,6 +42,8 @@ jobs:
       - run: tail -3 pytest-ci.txt >> "$GITHUB_STEP_SUMMARY"
 
   run:
+    needs: test
+    if: ${{ !cancelled() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
@@ -65,22 +74,33 @@ jobs:
             esac
           fi
           echo "action=$a" >> "$GITHUB_OUTPUT"; echo "action=$a"
+      - name: Calendar gate (NYSE/NASDAQ; skips are recorded with a reason)
+        id: gate
+        run: python tools/gate.py "${{ steps.act.outputs.action }}" "${{ github.event_name }}" dbstore
       - name: Run engine (apply owner controls, scan / monitor)
         id: engine
+        if: steps.gate.outputs.proceed != 'false'
         env:
+          AITL_FAIL_AFTER_PERSIST: "1"
+          AITL_INPUT_SETTINGS: ${{ github.event.inputs.settings_json }}
+          AITL_INPUT_COMMAND: ${{ github.event.inputs.command_json }}
+          AITL_ALLOW_KEYLESS: ${{ vars.AITL_ALLOW_KEYLESS }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           AITL_DB: ${{ github.workspace }}/dbstore/ailab.db
           AITL_CONTROL_DIR: ${{ github.workspace }}/dbstore/control
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python ci_run.py "${{ steps.act.outputs.action }}"
       - name: Export static snapshot
-        if: steps.engine.outputs.changed != 'false'
+        if: steps.engine.outputs.changed == 'true'
         env:
           AITL_DB: ${{ github.workspace }}/dbstore/ailab.db
           AITL_TRIGGER: ${{ github.event_name }}:${{ steps.act.outputs.action }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python export_static.py site
       - name: Persist ledger DB + control file to branch data (single squashed commit, race-safe)
-        if: steps.engine.outputs.changed != 'false'
+        if: steps.engine.outputs.changed == 'true'
         run: |
           cd dbstore
           python - <<'PY'
@@ -101,10 +121,13 @@ jobs:
             echo "data branch moved during run, retrying ($i)"; git checkout -q --detach origin/data; sleep 3
           done
       - uses: actions/configure-pages@v5
-        if: steps.engine.outputs.changed != 'false'
+        if: steps.engine.outputs.changed == 'true'
       - uses: actions/upload-pages-artifact@v3
-        if: steps.engine.outputs.changed != 'false'
+        if: steps.engine.outputs.changed == 'true'
         with: { path: site }
       - id: deploy
-        if: steps.engine.outputs.changed != 'false'
+        if: steps.engine.outputs.changed == 'true'
         uses: actions/deploy-pages@v4
+      - name: Fail the run if the ENGINE failed (after the failure was persisted + published)
+        if: steps.engine.outputs.engine_status == 'failed'
+        run: echo "engine run failed; see job_runs / Activity on the dashboard" && exit 1

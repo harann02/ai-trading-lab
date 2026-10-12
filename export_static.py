@@ -50,4 +50,7 @@ dump("meta.json", {"generated_utc": now.isoformat(timespec="seconds"), "generate
                    "run_url": run_url, "run_number": gh.get("GITHUB_RUN_NUMBER"), "platform_version": config.PLATFORM_VERSION, "data_label": data.DATA_LABEL, "heartbeats": hb,
                    "mode": "PAPER TRADING / DELAYED yfinance DATA / updates on workflow runs (not real-time ticks)", "us_market": cal.us_status(now), "specials": cal.upcoming_special_days(now.date(), 75),
                    "controls_applied_count": applied, "repo": "harann02/ai-trading-lab", "control_branch": "data", "control_path": "control/commands.json", "workflow": "run.yml"})
+try:
+    from app.v3 import export as v3x; dump("v3.json", v3x.build(cfg, now))
+except Exception as e: print("v3 export failed", e); dump("v3.json", {"error": str(e)})
 print(f"exported to {out}: {len(list(D.rglob('*.json')))} json files, {n} candle files")
