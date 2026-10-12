@@ -1,0 +1,22 @@
+# docker compose up -d      (needs .env with DASH_USER / DASH_PASS; put Caddy/nginx/Fly/Render TLS in front: Basic Auth is only safe over HTTPS)
+services:
+  web:
+    build: .
+    env_file: .env
+    ports: ["127.0.0.1:8080:8080"]      # bind to localhost; expose only through the TLS reverse proxy
+    volumes: ["ailab-data:/data"]
+    restart: unless-stopped
+  scheduler:
+    build: .
+    command: ["python", "scheduler.py"]
+    env_file: .env
+    volumes: ["ailab-data:/data"]
+    restart: unless-stopped
+    depends_on: [web]
+  caddy:                                 # optional TLS: set DOMAIN in .env (automatic Let's Encrypt)
+    image: caddy:2
+    profiles: ["tls"]
+    command: caddy reverse-proxy --from ${DOMAIN:-localhost} --to web:8080
+    ports: ["80:80", "443:443"]
+    depends_on: [web]
+volumes: { ailab-data: {} }

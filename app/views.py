@@ -97,7 +97,17 @@ def discovery():
     out = []
     for s, e in rows.items():
         u = um.get(s, {}); e["name"] = u.get("name"); e["exchange"] = u.get("exchange"); e["sources"] = u.get("sources"); out.append(e)
-    out.sort(key=lambda e: -((e.get("swing") or {}).get("score") or -1)); return {"rows": out, "regime": (list(sr.values())[0][1].get("regime") if sr else None), "scan_date": list(sr.values())[0][0] if sr else None}
+    out.sort(key=lambda e: -((e.get("swing") or {}).get("score") or -1))
+    for e in out[:200]:                                    # v3: price context from stored FINAL daily bars (END-OF-DAY, never live)
+        try:
+            df = data.load_bars(e["symbol"], include_partial=False)
+            if df is not None and len(df) >= 2:
+                cl = df["close"]; e["d1_pct"] = float((cl.iloc[-1] / cl.iloc[-2] - 1) * 100); e["volume"] = float(df["volume"].iloc[-1]); e["last_bar"] = str(df.index[-1].date()); e["price_label"] = "END-OF-DAY"
+                s50 = cl.rolling(50).mean().iloc[-1]; s200 = cl.rolling(200).mean().iloc[-1] if len(cl) >= 200 else None
+                e["trend"] = ("UPTREND" if cl.iloc[-1] > s50 and (s200 is None or s50 > s200) else "DOWNTREND" if cl.iloc[-1] < s50 and (s200 is not None and s50 < s200) else "MIXED") if s50 == s50 else None
+        except Exception: pass
+        sw = e.get("swing") or {}; e["strategy"] = "Momentum & Swing"; e["action"] = sw.get("status")
+    return {"rows": out, "regime": (list(sr.values())[0][1].get("regime") if sr else None), "scan_date": list(sr.values())[0][0] if sr else None}
 
 def universe_summary():
     c = db.conn(); tot = c.execute("SELECT COUNT(*) n, SUM(passed) p FROM universe_members").fetchone()

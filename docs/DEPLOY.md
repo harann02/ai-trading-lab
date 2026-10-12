@@ -1,0 +1,17 @@
+# Deployment & security (free-first)
+
+## Default (free, active): GitHub Actions + Pages — **READ-ONLY site**
+* Engine runs on GitHub Actions (`.github/workflows/run.yml`): scan 21:30 UTC Mon–Fri (= 05:30 MYT Tue–Sat), monitor every 15 min 13:00–21:59 UTC guarded by the NYSE calendar (`tools/gate.py`), weekly report Sat 02:00 UTC. Ledger DB on branch `data`. Pages serves a static JSON snapshot.
+* **The public site has no token input and makes no GitHub API call.** v2's browser-PAT flow was removed in v3 because any token powerful enough to write the repo should never be pasted into a public web page.
+* **Owner controls (free, safe):** (1) Actions → *scan-monitor-deploy* → **Run workflow**, paste JSON into `settings_json` / `command_json` (GitHub authenticates you; write access required; the engine re-validates and audits); (2) edit `control/commands.json` on branch `data` in the GitHub web UI; (3) the self-hosted dashboard below. The Controls tab only builds the JSON to paste.
+* Why not a fine-grained PAT in the browser? It *would* limit blast radius (repo-scoped, Contents + Actions only), but it still lets anyone who steals it from the browser write the ledger/control file; with `workflow_dispatch` inputs no secret ever touches the page. Therefore the in-page token entry is disabled, not "made safer".
+* Secrets: only via Actions secrets (`GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, optional paid keys). Tests scan the exported snapshot and the repo for token patterns.
+* Watchdog (`.github/workflows/watchdog.yml`): reads the DB from branch `data`, opens/updates **one** issue labeled `scheduler-alert` on a missed scan / ≥ 3 missed monitor slots / stale data / failed run, and closes it when healthy.
+
+## Optional: self-hosted authenticated dashboard (not deployed by default)
+Files: `Dockerfile`, `docker-compose.yml`, `.env.example`, `scripts/backup.sh`, `scripts/restore.sh`, `scheduler.py`.
+* Security: HTTP Basic auth on every route (fails closed with 503 if `DASH_USER/DASH_PASS` unset), per-IP rate limits (reads/writes), CSRF (`X-Requested-With` + same-origin check) on every mutation, audit log, `/healthz` (liveness) + `/readyz`, JSON logs. Put TLS in front (Fly.io/Render terminate TLS; VPS: `docker compose --profile tls up` with Caddy, set `DOMAIN`). **Basic auth is only acceptable over HTTPS.**
+* **Single authoritative writer.** `ledger_meta.writer_mode` ∈ `actions` (default) | `selfhosted`. The Actions engine refuses to write unless mode=`actions`; the backend's write API and the self-hosted scheduler refuse unless mode=`selfhosted` (HTTP 409 / job skipped with reason). A DB-level lease with expiry prevents two writers even within one mode. **Hand-over:** run command `{"type":"set_writer_mode","mode":"selfhosted"}` via Actions → download the DB from branch `data` → start the container on it. Reverse the same way.
+* Low-cost hosting: Oracle Cloud Always-Free VM, Fly.io (1 small VM + 1 GB volume), Render, any €4 VPS. Fly sketch: `fly launch --no-deploy; fly volumes create data --size 1; fly secrets set DASH_USER=… DASH_PASS=…; fly deploy`.
+* Backups: `scripts/backup.sh` (online backup + integrity check + sha256), `scripts/restore.sh` (verifies, keeps `.pre-restore-*`), `GET /api/backup`.
+* **Status: code + tests exist (auth/CSRF/writer-mode tests pass). The container image was NOT built or run in this environment (no Docker available) and no public instance exists — do not treat it as operational until you deploy and check `/healthz`.**

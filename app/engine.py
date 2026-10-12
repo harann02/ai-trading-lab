@@ -48,7 +48,7 @@ def pending_buy_reserved():
     rs = c.execute("SELECT * FROM orders WHERE side='BUY' AND status='pending'").fetchall(); c.close()
     return rs
 
-def create_order(*, decision_key, decision_id, symbol, market, side, qty, ref_price, stop, target, reason, now, needs_approval=False, strategy_id=None, signal_status=None, plan_json=None):
+def create_order(*, decision_key, decision_id, symbol, market, side, qty, ref_price, stop, target, reason, now, needs_approval=False, strategy_id=None, signal_status=None, plan_json=None, stamp=None):
     """Idempotent: unique decision_key. Returns order id or None if it already exists."""
     c = db.conn()
     try:
@@ -57,11 +57,19 @@ def create_order(*, decision_key, decision_id, symbol, market, side, qty, ref_pr
                         (decision_key, decision_id, ledger.iso(now), ledger.iso(now), symbol, market, side, qty, ref_price, stop, target, reason, int(needs_approval), strategy_id, signal_status, plan_json))
         oid = cur.lastrowid
         c.execute("INSERT INTO order_events(order_id,ts,status,note) VALUES(?,?,?,?)", (oid, ledger.iso(now), "pending", reason))
-        c.commit(); return oid
+        c.commit()
     except Exception as e:
+        c.close()
         if "UNIQUE" in str(e): return None
         raise
-    finally: c.close()
+    c.close()
+    if strategy_id and market == "US":                    # v3: order record carries signal/data timestamps, eligible session and fill-model version
+        from .v3 import execution as _ex
+        try:
+            ds = c2 = db.conn(); r = c2.execute("SELECT date FROM bars WHERE symbol=? AND final=1 ORDER BY date DESC LIMIT 1", (symbol,)).fetchone(); c2.close()
+            _ex.stamp_new_order(oid, created=now, signal_ts=ledger.iso(now), data_ts=(r["date"] if r else None), data_source="yfinance daily bars (EOD, final)", **(stamp or {}))
+        except Exception as e: db.event("WARN", "order", f"order stamp failed for #{oid}: {e}", ledger.iso(now))
+    return oid
 
 def set_order(oid, status, note, now, **kw):
     c = db.conn(); sets = ",".join(f"{k}=?" for k in kw)

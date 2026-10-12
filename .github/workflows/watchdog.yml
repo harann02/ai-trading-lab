@@ -1,0 +1,24 @@
+name: watchdog
+on:
+  schedule:
+    - cron: "50 21 * * 1-5"     # after the scan slot (21:30 UTC) + tolerance
+    - cron: "5 */3 * * 1-5"     # every 3h on weekdays: monitor gaps / failed runs
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  issues: write
+concurrency: { group: ailab-watchdog, cancel-in-progress: true }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { ref: data, path: dbstore, fetch-depth: 1 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python tools/watchdog.py dbstore/ailab.db

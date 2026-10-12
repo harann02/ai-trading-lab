@@ -39,3 +39,9 @@ nav a{padding:8px 14px;color:var(--dim);text-decoration:none;white-space:nowrap;
 .errbox{border:1px solid var(--r);color:#ff8a80;padding:6px 10px;border-radius:4px;margin:6px 0;white-space:pre-wrap}
 @media (max-width:900px){.two{grid-template-columns:1fr}main{grid-template-columns:1fr;padding:8px}section{padding:8px}.cards.k{grid-template-columns:repeat(2,1fr)}header{position:static}nav{top:0}}
 @media (max-width:520px){body{font-size:12px}.card .v{font-size:15px}th,td{padding:3px 5px}.chip{font-size:10px}.h380{height:300px}.brand{font-size:12px}}
+
+/* ---- v3 ---- */
+main>*,section{min-width:0}section{overflow-x:auto}pre,code,.memo,.note,.errbox{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}
+.btn.on{border-color:var(--g);color:var(--g)}.card.wide2{grid-column:span 2}.chart.h340{height:340px}.warn{color:var(--y)}.mid{color:var(--y)}
+details{margin:6px 0;border:1px solid var(--line);border-radius:5px;padding:4px 8px}summary{cursor:pointer}
+@media (max-width:520px){.card.wide2{grid-column:span 2}.chart.h340{height:260px}table{font-size:11px}}

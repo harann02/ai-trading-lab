@@ -1,0 +1,1116 @@
+{
+ "generated": "2026-10-12T02:05:06+00:00",
+ "kind": "HISTORICAL BACKTEST (hypothetical; NOT forward evidence)",
+ "universe_size": 513,
+ "decision_rule": "design (written before running; nothing tuned on the test window):\n  * dev window (IS) 2021-2023, test window (OOS) 2024-onward; parameters identical across arms and equal to the live defaults.\n  * adopt DAILY (or breakout_daily) as the default ONLY IF ALL hold: OOS n_trades >= 30; OOS AND IS net return (MYR after exit FX) >= weekly; OOS Sharpe >= weekly;\n    OOS max drawdown not worse than weekly by > 3 percentage points; still >= weekly under 2x costs. Otherwise weekly stays default and cadence remains a setting.\n  * cost sensitivity (x1, x2, x3 modelled spread+slippage), regime analysis (calendar-year windows), parameter stability (+/- one step; reported, never used to pick).",
+ "arms": {
+  "weekly": {
+   "FULL": {
+    "label": "FULL",
+    "start": "2021-01-04",
+    "end": "2026-10-09",
+    "years": 5.76,
+    "ret_usd_pct": 56.53875538424622,
+    "ret_myr_pct_after_exit_fx": 58.72464024261011,
+    "cagr_usd_pct": 8.090107994918917,
+    "max_dd_pct": -7.91045868134278,
+    "sharpe": 0.5898564771466912,
+    "sortino": 0.8549309127857699,
+    "n_trades": 159,
+    "win_rate": 40.25157232704403,
+    "avg_hold_days": 46.735849056603776,
+    "costs_usd": 65.52464723485159
+   },
+   "IS 2021-2023": {
+    "label": "IS 2021-2023",
+    "start": "2021-01-04",
+    "end": "2023-12-29",
+    "years": 2.98,
+    "ret_usd_pct": 11.560714058993483,
+    "ret_myr_pct_after_exit_fx": 27.41191082800931,
+    "cagr_usd_pct": 3.7373761101506586,
+    "max_dd_pct": -6.537164070180723,
+    "sharpe": 0.12710867899746026,
+    "sortino": 0.1773318745968819,
+    "n_trades": 65,
+    "win_rate": 38.46153846153847,
+    "avg_hold_days": 48.292307692307695,
+    "costs_usd": 22.43340040175176
+   },
+   "OOS 2024-": {
+    "label": "OOS 2024-",
+    "start": "2024-01-02",
+    "end": "2026-10-09",
+    "years": 2.77,
+    "ret_usd_pct": 40.935987495038376,
+    "ret_myr_pct_after_exit_fx": 25.08961156015126,
+    "cagr_usd_pct": 13.197811789135304,
+    "max_dd_pct": -7.91045868134278,
+    "sharpe": 0.9860287081798017,
+    "sortino": 1.4633109313607382,
+    "n_trades": 94,
+    "win_rate": 41.48936170212766,
+    "avg_hold_days": 45.659574468085104,
+    "costs_usd": 43.09124683309983
+   }
+  },
+  "daily": {
+   "FULL": {
+    "label": "FULL",
+    "start": "2021-01-04",
+    "end": "2026-10-09",
+    "years": 5.76,
+    "ret_usd_pct": 69.0287790844506,
+    "ret_myr_pct_after_exit_fx": 71.38907285273501,
+    "cagr_usd_pct": 9.540190759932488,
+    "max_dd_pct": -10.533910922964907,
+    "sharpe": 0.651326432915633,
+    "sortino": 0.9483618032537601,
+    "n_trades": 193,
+    "win_rate": 36.26943005181347,
+    "avg_hold_days": 43.35751295336787,
+    "costs_usd": 86.30429852054131
+   },
+   "IS 2021-2023": {
+    "label": "IS 2021-2023",
+    "start": "2021-01-04",
+    "end": "2023-12-29",
+    "years": 2.98,
+    "ret_usd_pct": 19.19741167691047,
+    "ret_myr_pct_after_exit_fx": 36.133674973405384,
+    "cagr_usd_pct": 6.0668939174225445,
+    "max_dd_pct": -8.839780376981354,
+    "sharpe": 0.39145203038629267,
+    "sortino": 0.5534382882402156,
+    "n_trades": 82,
+    "win_rate": 36.58536585365854,
+    "avg_hold_days": 44.048780487804876,
+    "costs_usd": 33.384783204805856
+   },
+   "OOS 2024-": {
+    "label": "OOS 2024-",
+    "start": "2024-01-02",
+    "end": "2026-10-09",
+    "years": 2.77,
+    "ret_usd_pct": 42.15299729580304,
+    "ret_myr_pct_after_exit_fx": 26.169784807228467,
+    "cagr_usd_pct": 13.5499843981836,
+    "max_dd_pct": -10.533910922964907,
+    "sharpe": 0.8720160651422258,
+    "sortino": 1.2900550045947248,
+    "n_trades": 111,
+    "win_rate": 36.03603603603604,
+    "avg_hold_days": 42.846846846846844,
+    "costs_usd": 52.91951531573545
+   }
+  },
+  "breakout_daily": {
+   "FULL": {
+    "label": "FULL",
+    "start": "2021-01-04",
+    "end": "2026-10-09",
+    "years": 5.76,
+    "ret_usd_pct": 42.32212811978944,
+    "ret_myr_pct_after_exit_fx": 44.30949402226858,
+    "cagr_usd_pct": 6.318238654007646,
+    "max_dd_pct": -9.115517484902103,
+    "sharpe": 0.3911471303901305,
+    "sortino": 0.5766997488138448,
+    "n_trades": 170,
+    "win_rate": 40.0,
+    "avg_hold_days": 45.44705882352941,
+    "costs_usd": 67.37679986353629
+   },
+   "IS 2021-2023": {
+    "label": "IS 2021-2023",
+    "start": "2021-01-04",
+    "end": "2023-12-29",
+    "years": 2.98,
+    "ret_usd_pct": 24.837231663327476,
+    "ret_myr_pct_after_exit_fx": 42.57483346953512,
+    "cagr_usd_pct": 7.724321633352527,
+    "max_dd_pct": -7.5631916493323015,
+    "sharpe": 0.5952042262174686,
+    "sortino": 0.9189009093329399,
+    "n_trades": 72,
+    "win_rate": 43.05555555555556,
+    "avg_hold_days": 46.166666666666664,
+    "costs_usd": 27.560121696309565
+   },
+   "OOS 2024-": {
+    "label": "OOS 2024-",
+    "start": "2024-01-02",
+    "end": "2026-10-09",
+    "years": 2.77,
+    "ret_usd_pct": 15.066335593239844,
+    "ret_myr_pct_after_exit_fx": 2.1286576894712805,
+    "cagr_usd_pct": 5.200825968892864,
+    "max_dd_pct": -9.115517484902103,
+    "sharpe": 0.25655677570962726,
+    "sortino": 0.36837649423145774,
+    "n_trades": 98,
+    "win_rate": 37.755102040816325,
+    "avg_hold_days": 44.91836734693877,
+    "costs_usd": 39.81667816722672
+   }
+  }
+ },
+ "cost_sensitivity": {
+  "x1": {
+   "weekly": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 11.560714058993483,
+     "ret_myr_pct_after_exit_fx": 27.41191082800931,
+     "cagr_usd_pct": 3.7373761101506586,
+     "max_dd_pct": -6.537164070180723,
+     "sharpe": 0.12710867899746026,
+     "sortino": 0.1773318745968819,
+     "n_trades": 65,
+     "win_rate": 38.46153846153847,
+     "avg_hold_days": 48.292307692307695,
+     "costs_usd": 22.43340040175176
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 40.935987495038376,
+     "ret_myr_pct_after_exit_fx": 25.08961156015126,
+     "cagr_usd_pct": 13.197811789135304,
+     "max_dd_pct": -7.91045868134278,
+     "sharpe": 0.9860287081798017,
+     "sortino": 1.4633109313607382,
+     "n_trades": 94,
+     "win_rate": 41.48936170212766,
+     "avg_hold_days": 45.659574468085104,
+     "costs_usd": 43.09124683309983
+    }
+   },
+   "daily": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 19.19741167691047,
+     "ret_myr_pct_after_exit_fx": 36.133674973405384,
+     "cagr_usd_pct": 6.0668939174225445,
+     "max_dd_pct": -8.839780376981354,
+     "sharpe": 0.39145203038629267,
+     "sortino": 0.5534382882402156,
+     "n_trades": 82,
+     "win_rate": 36.58536585365854,
+     "avg_hold_days": 44.048780487804876,
+     "costs_usd": 33.384783204805856
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 42.15299729580304,
+     "ret_myr_pct_after_exit_fx": 26.169784807228467,
+     "cagr_usd_pct": 13.5499843981836,
+     "max_dd_pct": -10.533910922964907,
+     "sharpe": 0.8720160651422258,
+     "sortino": 1.2900550045947248,
+     "n_trades": 111,
+     "win_rate": 36.03603603603604,
+     "avg_hold_days": 42.846846846846844,
+     "costs_usd": 52.91951531573545
+    }
+   },
+   "breakout_daily": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 24.837231663327476,
+     "ret_myr_pct_after_exit_fx": 42.57483346953512,
+     "cagr_usd_pct": 7.724321633352527,
+     "max_dd_pct": -7.5631916493323015,
+     "sharpe": 0.5952042262174686,
+     "sortino": 0.9189009093329399,
+     "n_trades": 72,
+     "win_rate": 43.05555555555556,
+     "avg_hold_days": 46.166666666666664,
+     "costs_usd": 27.560121696309565
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 15.066335593239844,
+     "ret_myr_pct_after_exit_fx": 2.1286576894712805,
+     "cagr_usd_pct": 5.200825968892864,
+     "max_dd_pct": -9.115517484902103,
+     "sharpe": 0.25655677570962726,
+     "sortino": 0.36837649423145774,
+     "n_trades": 98,
+     "win_rate": 37.755102040816325,
+     "avg_hold_days": 44.91836734693877,
+     "costs_usd": 39.81667816722672
+    }
+   }
+  },
+  "x2": {
+   "weekly": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 11.379942217999739,
+     "ret_myr_pct_after_exit_fx": 27.2054538697585,
+     "cagr_usd_pct": 3.6809667601733542,
+     "max_dd_pct": -6.653380338876024,
+     "sharpe": 0.1197702329427706,
+     "sortino": 0.1666640801645649,
+     "n_trades": 65,
+     "win_rate": 38.46153846153847,
+     "avg_hold_days": 48.276923076923076,
+     "costs_usd": 43.069006860295374
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 39.24172511573376,
+     "ret_myr_pct_after_exit_fx": 23.58584643475592,
+     "cagr_usd_pct": 12.704284677500045,
+     "max_dd_pct": -7.68164672361743,
+     "sharpe": 0.9552029124609327,
+     "sortino": 1.416404747306447,
+     "n_trades": 94,
+     "win_rate": 41.48936170212766,
+     "avg_hold_days": 45.659574468085104,
+     "costs_usd": 82.41432394436953
+    }
+   },
+   "daily": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 16.288557968601136,
+     "ret_myr_pct_after_exit_fx": 32.81151436856335,
+     "cagr_usd_pct": 5.191601881421826,
+     "max_dd_pct": -9.801976511817722,
+     "sharpe": 0.2955322777954411,
+     "sortino": 0.4173805041376062,
+     "n_trades": 84,
+     "win_rate": 35.714285714285715,
+     "avg_hold_days": 42.98809523809524,
+     "costs_usd": 65.01232633832382
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 39.64898678286279,
+     "ret_myr_pct_after_exit_fx": 23.947316948071794,
+     "cagr_usd_pct": 12.823265899319258,
+     "max_dd_pct": -10.402873291165992,
+     "sharpe": 0.8192314814151627,
+     "sortino": 1.2087179786758449,
+     "n_trades": 111,
+     "win_rate": 35.13513513513514,
+     "avg_hold_days": 42.846846846846844,
+     "costs_usd": 99.70375141453081
+    }
+   },
+   "breakout_daily": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 27.262896916485936,
+     "ret_myr_pct_after_exit_fx": 45.34515138602493,
+     "cagr_usd_pct": 8.421878542968454,
+     "max_dd_pct": -7.615855409198158,
+     "sharpe": 0.6725676191233341,
+     "sortino": 1.0354453273520992,
+     "n_trades": 71,
+     "win_rate": 43.66197183098591,
+     "avg_hold_days": 47.183098591549296,
+     "costs_usd": 55.39870822094698
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 13.52441493666956,
+     "ret_myr_pct_after_exit_fx": 0.7601054877581337,
+     "cagr_usd_pct": 4.689332321534034,
+     "max_dd_pct": -9.364964812921961,
+     "sharpe": 0.20960516561737708,
+     "sortino": 0.30000581555975303,
+     "n_trades": 98,
+     "win_rate": 37.755102040816325,
+     "avg_hold_days": 44.91836734693877,
+     "costs_usd": 78.43416833715705
+    }
+   }
+  },
+  "x3": {
+   "weekly": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 10.702343373685718,
+     "ret_myr_pct_after_exit_fx": 26.43157783053518,
+     "cagr_usd_pct": 3.468980795978238,
+     "max_dd_pct": -6.658273422093952,
+     "sharpe": 0.0921295895967631,
+     "sortino": 0.12794111996792473,
+     "n_trades": 65,
+     "win_rate": 38.46153846153847,
+     "avg_hold_days": 48.276923076923076,
+     "costs_usd": 63.07033437372282
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 35.33347722967544,
+     "ret_myr_pct_after_exit_fx": 20.11702900467953,
+     "cagr_usd_pct": 11.551022387747478,
+     "max_dd_pct": -7.938446524313858,
+     "sharpe": 0.847803057158433,
+     "sortino": 1.2476654420433189,
+     "n_trades": 95,
+     "win_rate": 43.15789473684211,
+     "avg_hold_days": 45.23157894736842,
+     "costs_usd": 121.04409812866386
+    }
+   },
+   "daily": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 15.381217477454555,
+     "ret_myr_pct_after_exit_fx": 31.77525364969167,
+     "cagr_usd_pct": 4.915603727690221,
+     "max_dd_pct": -10.000798509858267,
+     "sharpe": 0.26289493515703943,
+     "sortino": 0.3703234476309086,
+     "n_trades": 84,
+     "win_rate": 35.714285714285715,
+     "avg_hold_days": 43.035714285714285,
+     "costs_usd": 96.22316571679303
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 44.775309916677465,
+     "ret_myr_pct_after_exit_fx": 28.49725327688397,
+     "cagr_usd_pct": 14.3023242811412,
+     "max_dd_pct": -9.593195502980079,
+     "sharpe": 0.9577894268980301,
+     "sortino": 1.4175668318630161,
+     "n_trades": 108,
+     "win_rate": 37.96296296296296,
+     "avg_hold_days": 44.0462962962963,
+     "costs_usd": 139.6012887194812
+    }
+   },
+   "breakout_daily": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 26.23557106274008,
+     "ret_myr_pct_after_exit_fx": 44.17185708459588,
+     "cagr_usd_pct": 8.127535113383356,
+     "max_dd_pct": -7.958051831424906,
+     "sharpe": 0.6394809103642894,
+     "sortino": 0.983891098059839,
+     "n_trades": 71,
+     "win_rate": 42.25352112676056,
+     "avg_hold_days": 47.183098591549296,
+     "costs_usd": 81.52446493043166
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 12.93982114920842,
+     "ret_myr_pct_after_exit_fx": 0.2412414907498217,
+     "cagr_usd_pct": 4.494248134074064,
+     "max_dd_pct": -9.629778391490385,
+     "sharpe": 0.1900760312195937,
+     "sortino": 0.271702741146412,
+     "n_trades": 98,
+     "win_rate": 37.755102040816325,
+     "avg_hold_days": 44.91836734693877,
+     "costs_usd": 115.95952977302161
+    }
+   }
+  }
+ },
+ "parameter_stability": {
+  "buy_min_score-5": {
+   "weekly": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 11.352414553843392,
+     "ret_myr_pct_after_exit_fx": 27.17401491456377,
+     "cagr_usd_pct": 3.672371492081772,
+     "max_dd_pct": -6.725500345306457,
+     "sharpe": 0.11854130730522783,
+     "sortino": 0.16523364561912068,
+     "n_trades": 66,
+     "win_rate": 37.878787878787875,
+     "avg_hold_days": 47.57575757575758,
+     "costs_usd": 22.919498772869616
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 40.788541317206594,
+     "ret_myr_pct_after_exit_fx": 24.95874374250704,
+     "cagr_usd_pct": 13.155012763735119,
+     "max_dd_pct": -7.932129135298749,
+     "sharpe": 0.9845785310792329,
+     "sortino": 1.4634875467667525,
+     "n_trades": 94,
+     "win_rate": 41.48936170212766,
+     "avg_hold_days": 45.659574468085104,
+     "costs_usd": 42.83738729591634
+    }
+   },
+   "daily": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 19.19741167691047,
+     "ret_myr_pct_after_exit_fx": 36.133674973405384,
+     "cagr_usd_pct": 6.0668939174225445,
+     "max_dd_pct": -8.839780376981354,
+     "sharpe": 0.39145203038629267,
+     "sortino": 0.5534382882402156,
+     "n_trades": 82,
+     "win_rate": 36.58536585365854,
+     "avg_hold_days": 44.048780487804876,
+     "costs_usd": 33.384783204805856
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 46.20378217187384,
+     "ret_myr_pct_after_exit_fx": 29.765112839958707,
+     "cagr_usd_pct": 14.708494547041372,
+     "max_dd_pct": -10.533910922964907,
+     "sharpe": 0.9600932428262866,
+     "sortino": 1.4279260363987498,
+     "n_trades": 109,
+     "win_rate": 36.69724770642202,
+     "avg_hold_days": 43.25688073394495,
+     "costs_usd": 51.83042027331404
+    }
+   }
+  },
+  "buy_min_score+5": {
+   "weekly": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 11.560714058993483,
+     "ret_myr_pct_after_exit_fx": 27.41191082800931,
+     "cagr_usd_pct": 3.7373761101506586,
+     "max_dd_pct": -6.537164070180723,
+     "sharpe": 0.12710867899746026,
+     "sortino": 0.1773318745968819,
+     "n_trades": 65,
+     "win_rate": 38.46153846153847,
+     "avg_hold_days": 48.292307692307695,
+     "costs_usd": 22.43340040175176
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 40.935987495038376,
+     "ret_myr_pct_after_exit_fx": 25.08961156015126,
+     "cagr_usd_pct": 13.197811789135304,
+     "max_dd_pct": -7.91045868134278,
+     "sharpe": 0.9860287081798017,
+     "sortino": 1.4633109313607382,
+     "n_trades": 94,
+     "win_rate": 41.48936170212766,
+     "avg_hold_days": 45.659574468085104,
+     "costs_usd": 43.09124683309983
+    }
+   },
+   "daily": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 19.19741167691047,
+     "ret_myr_pct_after_exit_fx": 36.133674973405384,
+     "cagr_usd_pct": 6.0668939174225445,
+     "max_dd_pct": -8.839780376981354,
+     "sharpe": 0.39145203038629267,
+     "sortino": 0.5534382882402156,
+     "n_trades": 82,
+     "win_rate": 36.58536585365854,
+     "avg_hold_days": 44.048780487804876,
+     "costs_usd": 33.384783204805856
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 42.15299729580304,
+     "ret_myr_pct_after_exit_fx": 26.169784807228467,
+     "cagr_usd_pct": 13.5499843981836,
+     "max_dd_pct": -10.533910922964907,
+     "sharpe": 0.8720160651422258,
+     "sortino": 1.2900550045947248,
+     "n_trades": 111,
+     "win_rate": 36.03603603603604,
+     "avg_hold_days": 42.846846846846844,
+     "costs_usd": 52.91951531573545
+    }
+   }
+  },
+  "atr_stop_mult-0.5": {
+   "weekly": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 3.790083162700486,
+     "ret_myr_pct_after_exit_fx": 18.537183383074662,
+     "cagr_usd_pct": 1.2555102514231642,
+     "max_dd_pct": -10.84991138312309,
+     "sharpe": -0.19944337200070544,
+     "sortino": -0.2757977777053442,
+     "n_trades": 79,
+     "win_rate": 29.11392405063291,
+     "avg_hold_days": 37.81012658227848,
+     "costs_usd": 30.702034211872583
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 35.93847746353287,
+     "ret_myr_pct_after_exit_fx": 20.654005014796816,
+     "cagr_usd_pct": 11.730927687540426,
+     "max_dd_pct": -11.32805756391443,
+     "sharpe": 0.8408423838736041,
+     "sortino": 1.2416015499288573,
+     "n_trades": 113,
+     "win_rate": 38.05309734513274,
+     "avg_hold_days": 36.336283185840706,
+     "costs_usd": 51.947486375340254
+    }
+   },
+   "daily": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 18.597734947394564,
+     "ret_myr_pct_after_exit_fx": 35.448792677418005,
+     "cagr_usd_pct": 5.887618790210336,
+     "max_dd_pct": -10.850253840149671,
+     "sharpe": 0.3376041851109802,
+     "sortino": 0.4896351215818234,
+     "n_trades": 95,
+     "win_rate": 40.0,
+     "avg_hold_days": 37.50526315789474,
+     "costs_usd": 39.79997442917892
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 28.005127323375124,
+     "ret_myr_pct_after_exit_fx": 13.612654504956744,
+     "cagr_usd_pct": 9.3298293015587,
+     "max_dd_pct": -11.389767395907635,
+     "sharpe": 0.5867120433644012,
+     "sortino": 0.8522505711436736,
+     "n_trades": 136,
+     "win_rate": 36.029411764705884,
+     "avg_hold_days": 34.68382352941177,
+     "costs_usd": 65.73314784441656
+    }
+   }
+  },
+  "atr_stop_mult+0.5": {
+   "weekly": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 5.072738034177471,
+     "ret_myr_pct_after_exit_fx": 20.002085337909037,
+     "cagr_usd_pct": 1.6734945721111005,
+     "max_dd_pct": -5.714517373162231,
+     "sharpe": -0.16182162499039415,
+     "sortino": -0.2213810827471845,
+     "n_trades": 66,
+     "win_rate": 36.36363636363637,
+     "avg_hold_days": 47.75757575757576,
+     "costs_usd": 19.329889549293842
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 29.279781701739815,
+     "ret_myr_pct_after_exit_fx": 14.74399096413257,
+     "cagr_usd_pct": 9.72190233945145,
+     "max_dd_pct": -9.778843269912386,
+     "sharpe": 0.7109675971008484,
+     "sortino": 1.0178290281432432,
+     "n_trades": 89,
+     "win_rate": 42.69662921348314,
+     "avg_hold_days": 48.57303370786517,
+     "costs_usd": 33.888858914494804
+    }
+   },
+   "daily": {
+    "IS 2021-2023": {
+     "label": "IS 2021-2023",
+     "start": "2021-01-04",
+     "end": "2023-12-29",
+     "years": 2.98,
+     "ret_usd_pct": 7.672866559066738,
+     "ret_myr_pct_after_exit_fx": 22.971655285080274,
+     "cagr_usd_pct": 2.510517762411424,
+     "max_dd_pct": -8.708346826431491,
+     "sharpe": -0.03699082866575257,
+     "sortino": -0.051577760307784604,
+     "n_trades": 85,
+     "win_rate": 31.76470588235294,
+     "avg_hold_days": 41.95294117647059,
+     "costs_usd": 26.987655587761726
+    },
+    "OOS 2024-": {
+     "label": "OOS 2024-",
+     "start": "2024-01-02",
+     "end": "2026-10-09",
+     "years": 2.77,
+     "ret_usd_pct": 15.134913783350989,
+     "ret_myr_pct_after_exit_fx": 2.18952517488058,
+     "cagr_usd_pct": 5.223473106151055,
+     "max_dd_pct": -9.157817749793484,
+     "sharpe": 0.30073525879086893,
+     "sortino": 0.4063631623965097,
+     "n_trades": 100,
+     "win_rate": 39.0,
+     "avg_hold_days": 48.21,
+     "costs_usd": 31.31492567345075
+    }
+   }
+  }
+ },
+ "regime_years": {
+  "weekly": {
+   "2021": {
+    "label": "2021",
+    "start": "2021-01-04",
+    "end": "2021-12-31",
+    "years": 0.99,
+    "ret_usd_pct": 7.934841446367602,
+    "ret_myr_pct_after_exit_fx": 11.666533536642397,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -5.311035542112441,
+    "sharpe": 0.5128083443361245,
+    "sortino": 0.7087061044510996,
+    "n_trades": 30,
+    "win_rate": 43.333333333333336,
+    "avg_hold_days": 50.233333333333334,
+    "costs_usd": 10.558058928306252
+   },
+   "2022": {
+    "label": "2022",
+    "start": "2022-01-03",
+    "end": "2022-12-30",
+    "years": 0.99,
+    "ret_usd_pct": 0.2949187849639934,
+    "ret_myr_pct_after_exit_fx": 5.861944393731311,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -4.161272940181782,
+    "sharpe": -0.4323462146959488,
+    "sortino": -0.6140999849278768,
+    "n_trades": 15,
+    "win_rate": 40.0,
+    "avg_hold_days": 45.8,
+    "costs_usd": 3.851517252356432
+   },
+   "2023": {
+    "label": "2023",
+    "start": "2023-01-03",
+    "end": "2023-12-29",
+    "years": 0.99,
+    "ret_usd_pct": 3.4759514624821186,
+    "ret_myr_pct_after_exit_fx": 7.910782899971269,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -3.31507223590094,
+    "sharpe": 0.11316009228064892,
+    "sortino": 0.1614709521669708,
+    "n_trades": 20,
+    "win_rate": 30.0,
+    "avg_hold_days": 47.25,
+    "costs_usd": 8.023824221089075
+   },
+   "2024": {
+    "label": "2024",
+    "start": "2024-01-02",
+    "end": "2024-12-31",
+    "years": 1.0,
+    "ret_usd_pct": 28.801975270786826,
+    "ret_myr_pct_after_exit_fx": 24.780503923488297,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -4.582601670212039,
+    "sharpe": 2.1193759745571956,
+    "sortino": 3.208108299120432,
+    "n_trades": 29,
+    "win_rate": 44.827586206896555,
+    "avg_hold_days": 62.51724137931034,
+    "costs_usd": 13.896046107371859
+   },
+   "2025": {
+    "label": "2025",
+    "start": "2025-01-02",
+    "end": "2025-12-31",
+    "years": 0.99,
+    "ret_usd_pct": 1.7608439332575943,
+    "ret_myr_pct_after_exit_fx": -8.190654838543832,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -7.112842692151499,
+    "sharpe": -0.11679160515286309,
+    "sortino": -0.15469798509417504,
+    "n_trades": 33,
+    "win_rate": 42.42424242424242,
+    "avg_hold_days": 35.90909090909091,
+    "costs_usd": 15.74829387205025
+   },
+   "2026 YTD": {
+    "label": "2026 YTD",
+    "start": "2026-01-02",
+    "end": "2026-10-09",
+    "years": 0.77,
+    "ret_usd_pct": 6.860140400466075,
+    "ret_myr_pct_after_exit_fx": 7.483368190079642,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -7.91045868134278,
+    "sharpe": 0.5499080559602786,
+    "sortino": 0.8613736084527364,
+    "n_trades": 32,
+    "win_rate": 37.5,
+    "avg_hold_days": 40.4375,
+    "costs_usd": 13.44690685367772
+   }
+  },
+  "daily": {
+   "2021": {
+    "label": "2021",
+    "start": "2021-01-04",
+    "end": "2021-12-31",
+    "years": 0.99,
+    "ret_usd_pct": 21.096239158530338,
+    "ret_myr_pct_after_exit_fx": 25.282967667826938,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -6.909746145014617,
+    "sharpe": 1.5334314695039912,
+    "sortino": 2.253054273024922,
+    "n_trades": 34,
+    "win_rate": 44.11764705882353,
+    "avg_hold_days": 47.088235294117645,
+    "costs_usd": 12.568343312733509
+   },
+   "2022": {
+    "label": "2022",
+    "start": "2022-01-03",
+    "end": "2022-12-30",
+    "years": 0.99,
+    "ret_usd_pct": -0.48761180620038314,
+    "ret_myr_pct_after_exit_fx": 5.035978223841364,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -3.3123663198933673,
+    "sharpe": -0.7238797439089143,
+    "sortino": -0.9931245663160636,
+    "n_trades": 15,
+    "win_rate": 53.333333333333336,
+    "avg_hold_days": 48.86666666666667,
+    "costs_usd": 5.751724789838216
+   },
+   "2023": {
+    "label": "2023",
+    "start": "2023-01-03",
+    "end": "2023-12-29",
+    "years": 0.99,
+    "ret_usd_pct": 0.09644527401706515,
+    "ret_myr_pct_after_exit_fx": 4.386435904768349,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -7.268165295047302,
+    "sharpe": -0.3373816987269753,
+    "sortino": -0.45214061246043546,
+    "n_trades": 33,
+    "win_rate": 21.21212121212121,
+    "avg_hold_days": 38.72727272727273,
+    "costs_usd": 15.06471510223413
+   },
+   "2024": {
+    "label": "2024",
+    "start": "2024-01-02",
+    "end": "2024-12-31",
+    "years": 1.0,
+    "ret_usd_pct": 34.88630430712878,
+    "ret_myr_pct_after_exit_fx": 30.674867279290453,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -10.533910922964907,
+    "sharpe": 1.938288274959353,
+    "sortino": 3.1003636747419723,
+    "n_trades": 35,
+    "win_rate": 37.142857142857146,
+    "avg_hold_days": 52.48571428571429,
+    "costs_usd": 18.54982689610219
+   },
+   "2025": {
+    "label": "2025",
+    "start": "2025-01-02",
+    "end": "2025-12-31",
+    "years": 0.99,
+    "ret_usd_pct": -1.2201459933428138,
+    "ret_myr_pct_after_exit_fx": -10.880124800817148,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -9.547760882452238,
+    "sharpe": -0.3845146982720753,
+    "sortino": -0.5044882072325729,
+    "n_trades": 43,
+    "win_rate": 32.55813953488372,
+    "avg_hold_days": 35.372093023255815,
+    "costs_usd": 19.64832663302195
+   },
+   "2026 YTD": {
+    "label": "2026 YTD",
+    "start": "2026-01-02",
+    "end": "2026-10-09",
+    "years": 0.77,
+    "ret_usd_pct": 6.250538568090902,
+    "ret_myr_pct_after_exit_fx": 6.870211048857677,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -6.230233981945066,
+    "sharpe": 0.5014453710873097,
+    "sortino": 0.7200612125703847,
+    "n_trades": 33,
+    "win_rate": 39.39393939393939,
+    "avg_hold_days": 42.36363636363637,
+    "costs_usd": 14.721361786611313
+   }
+  },
+  "breakout_daily": {
+   "2021": {
+    "label": "2021",
+    "start": "2021-01-04",
+    "end": "2021-12-31",
+    "years": 0.99,
+    "ret_usd_pct": 16.96299934942791,
+    "ret_myr_pct_after_exit_fx": 21.00682702988972,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -4.075125908956001,
+    "sharpe": 1.4637312725683123,
+    "sortino": 2.201581884441483,
+    "n_trades": 29,
+    "win_rate": 51.724137931034484,
+    "avg_hold_days": 51.310344827586206,
+    "costs_usd": 9.299750701213052
+   },
+   "2022": {
+    "label": "2022",
+    "start": "2022-01-03",
+    "end": "2022-12-30",
+    "years": 0.99,
+    "ret_usd_pct": -1.5289855388286644,
+    "ret_myr_pct_after_exit_fx": 3.9368014209472113,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -3.938464325589519,
+    "sharpe": -0.9204206480662631,
+    "sortino": -1.2777069912320376,
+    "n_trades": 13,
+    "win_rate": 46.15384615384615,
+    "avg_hold_days": 56.53846153846154,
+    "costs_usd": 4.634104377534152
+   },
+   "2023": {
+    "label": "2023",
+    "start": "2023-01-03",
+    "end": "2023-12-29",
+    "years": 0.99,
+    "ret_usd_pct": 8.560716152683012,
+    "ret_myr_pct_after_exit_fx": 13.213473339891024,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -7.5631916493323015,
+    "sharpe": 0.613336160830193,
+    "sortino": 1.004581918515315,
+    "n_trades": 30,
+    "win_rate": 33.33333333333333,
+    "avg_hold_days": 36.7,
+    "costs_usd": 13.626266617562361
+   },
+   "2024": {
+    "label": "2024",
+    "start": "2024-01-02",
+    "end": "2024-12-31",
+    "years": 1.0,
+    "ret_usd_pct": 9.21509061798471,
+    "ret_myr_pct_after_exit_fx": 5.805163427897186,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -6.4245660047598125,
+    "sharpe": 0.5722662456016527,
+    "sortino": 0.8388680968973731,
+    "n_trades": 36,
+    "win_rate": 36.11111111111111,
+    "avg_hold_days": 52.52777777777778,
+    "costs_usd": 14.936942162369597
+   },
+   "2025": {
+    "label": "2025",
+    "start": "2025-01-02",
+    "end": "2025-12-31",
+    "years": 0.99,
+    "ret_usd_pct": 1.9851090156614237,
+    "ret_myr_pct_after_exit_fx": -7.98832131257996,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -9.113528455110686,
+    "sharpe": -0.059766198267170875,
+    "sortino": -0.08182813497408277,
+    "n_trades": 32,
+    "win_rate": 37.5,
+    "avg_hold_days": 34.84375,
+    "costs_usd": 14.287781411052537
+   },
+   "2026 YTD": {
+    "label": "2026 YTD",
+    "start": "2026-01-02",
+    "end": "2026-10-09",
+    "years": 0.77,
+    "ret_usd_pct": 2.9388563447082294,
+    "ret_myr_pct_after_exit_fx": 3.5392144919522917,
+    "cagr_usd_pct": null,
+    "max_dd_pct": -8.607749811695598,
+    "sharpe": 0.12983870185823923,
+    "sortino": 0.1925687363651336,
+    "n_trades": 30,
+    "win_rate": 40.0,
+    "avg_hold_days": 46.53333333333333,
+    "costs_usd": 10.591954593804587
+   }
+  }
+ },
+ "limitations": [
+  "SURVIVORSHIP BIAS: universe = CURRENT S&P 500 + Nasdaq-100 members (no historical constituents on the free stack). Failed/delisted names are absent, so stock-strategy results are biased UPWARD; buy&hold SPY/QQQ are unaffected.",
+  "NO POINT-IN-TIME FUNDAMENTALS: yfinance exposes only current fundamentals, so the swing backtest drops the fundamental factor (20% weight) and renormalises the other five. The live swing strategy uses fundamentals when available.",
+  "Prices are Yahoo split-adjusted daily bars; dividends are ignored (understates buy&hold slightly). Data errors are possible.",
+  "Spread/slippage are modelled (liquidity-tiered half-spread + 5 bps slippage), not observed quotes. No market impact, halts or partial fills.",
+  "Parameters are fixed a priori and were NOT tuned on these data; the 'out-of-sample' split is a pre-declared date, not a fitted one. Windows are anchored walk-forward evaluations without refitting.",
+  "Small RM10,000 account with whole shares: expensive stocks are unaffordable, which shapes results (and is the real constraint).",
+  "Universe = CURRENT index members (survivorship bias): delisted/removed names are absent, which flatters every arm; see docs/VALIDATION.md for the membership check.",
+  "Three arms on one historical path: differences within noise are not evidence. Daily entries multiply trades, so costs and overfitting risk rise."
+ ],
+ "benchmarks_total_return": {
+  "SPY": {
+   "FULL": {
+    "total_return_pct_usd_adjclose": 127.92613001845767,
+    "price_only_pct_usd": 111.1147236325905
+   },
+   "IS 2021-2023": {
+    "total_return_pct_usd_adjclose": 34.73758127717057,
+    "price_only_pct_usd": 28.883642871440962
+   },
+   "OOS 2024-": {
+    "total_return_pct_usd_adjclose": 70.1150208584786,
+    "price_only_pct_usd": 64.72442978487254
+   }
+  },
+  "QQQ": {
+   "FULL": {
+    "total_return_pct_usd_adjclose": 151.1397103493149,
+    "price_only_pct_usd": 142.88578625362217
+   },
+   "IS 2021-2023": {
+    "total_return_pct_usd_adjclose": 34.94215014977517,
+    "price_only_pct_usd": 32.39791543954054
+   },
+   "OOS 2024-": {
+    "total_return_pct_usd_adjclose": 89.31275966217243,
+    "price_only_pct_usd": 86.6092119439339
+   }
+  }
+ },
+ "decision": {
+  "daily": {
+   "checks": {
+    "oos_trades>=30": true,
+    "oos_net_return>=weekly": true,
+    "is_net_return>=weekly": true,
+    "oos_sharpe>=weekly": false,
+    "oos_mdd_not_worse_by_3pp": true,
+    "x2_cost_oos>=weekly_x2": true
+   },
+   "adopt": false
+  },
+  "breakout_daily": {
+   "checks": {
+    "oos_trades>=30": true,
+    "oos_net_return>=weekly": false,
+    "is_net_return>=weekly": true,
+    "oos_sharpe>=weekly": false,
+    "oos_mdd_not_worse_by_3pp": true,
+    "x2_cost_oos>=weekly_x2": false
+   },
+   "adopt": false
+  },
+  "default_cadence": "weekly",
+  "statement": "Adopted only if every pre-declared check passed; otherwise weekly remains the default and the cadence is an owner setting (entry_cadence)."
+ }
+}

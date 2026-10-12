@@ -9,11 +9,11 @@ const myt = iso => iso ? new Date(iso).toLocaleString('en-GB', { timeZone: 'Asia
 const ago = iso => { if (!iso) return '–'; const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? 'just now' : m < 90 ? m + ' min ago' : (m / 60).toFixed(1) + ' h ago'; };
 const statusCls = s => 'badge ' + String(s || '').replace(/ /g, '_');
 const J = async p => { const r = await fetch('data/' + p + (p.includes('?') ? '&' : '?') + 't=' + Date.now()); if (!r.ok) throw new Error(p + ' ' + r.status); return r.json(); };
-const NAMES = { swing: 'Momentum & Swing', meanrev: 'Mean reversion', baseline: 'Buy&hold SPY/QQQ', intraday: 'Intraday (proxy)' };
+const NAMES = { swing: 'Momentum & Swing (PRIMARY)', meanrev: 'Mean reversion (RESEARCH ONLY)', baseline: 'SPY/QQQ (retired; shadow benchmark only)', intraday: 'Intraday (proxy)' };
 const COLORS = { portfolio: '#e6edf3', swing: '#26a69a', meanrev: '#f5c542', baseline: '#c792ea', intraday: '#ff9a4a', SPY: '#4aa3ff', QQQ: '#ef5350' };
 
 async function loadAll() {
-  const names = ['meta', 'kpis', 'equity', 'holdings', 'orders', 'ledger', 'fx', 'discovery', 'universe', 'strategies', 'providers', 'monitor', 'feed', 'reports', 'validation', 'control'];
+  const names = ['meta', 'kpis', 'equity', 'holdings', 'orders', 'ledger', 'fx', 'discovery', 'universe', 'strategies', 'providers', 'monitor', 'feed', 'reports', 'validation', 'control', 'v3'];
   const res = await Promise.allSettled(names.map(n => J(n + '.json')));
   names.forEach((n, i) => { if (res[i].status === 'fulfilled') S.d[n] = res[i].value; else console.warn('load fail', n, res[i].reason); });
 }
@@ -114,10 +114,10 @@ function viewDiscovery(root) {
       { h: 'Symbol', l: 1, v: r => r.symbol, f: r => '<b>' + esc(r.symbol) + '</b> <span class="dim">' + esc((r.name || '').slice(0, 22)) + '</span>' },
       { h: 'Swing score', v: r => (r.swing || {}).score, f: r => fmt((r.swing || {}).score, 1) }, { h: 'Swing', v: r => (r.swing || {}).status, f: r => badge((r.swing || {}).status) },
       { h: 'MeanRev', v: r => (r.meanrev || {}).status, f: r => badge((r.meanrev || {}).status) }, { h: 'MR score', v: r => (r.meanrev || {}).score, f: r => fmt((r.meanrev || {}).score, 0) },
-      { h: 'Close $', v: r => r.close, f: r => fmt(r.close) }, { h: 'RSI14', v: r => r.rsi14, f: r => fmt(r.rsi14, 0) }, { h: 'RSI2', v: r => r.rsi2, f: r => fmt(r.rsi2, 0) },
+      { h: 'Close $', v: r => r.close, f: r => fmt(r.close) + ' <span class="dim" title="final daily bar">EOD</span>' }, { h: '1D', v: r => r.d1_pct, f: r => r.d1_pct == null ? '–' : pc(r.d1_pct, 1), c: r => cls(r.d1_pct) }, { h: 'Volume', v: r => r.volume, f: r => r.volume == null ? '–' : fmt(r.volume / 1e6, 2) + 'M' }, { h: 'Trend', v: r => r.trend, f: r => r.trend ? `<span class="${r.trend === 'UPTREND' ? 'ok' : r.trend === 'DOWNTREND' ? 'bad' : 'dim'}">${r.trend}</span>` : '–' }, { h: 'Strategy', v: r => r.strategy, f: r => '<span class="dim">' + esc(r.strategy || '') + '</span>' }, { h: 'Action', v: r => r.action, f: r => badge(r.action) }, { h: 'RSI14', v: r => r.rsi14, f: r => fmt(r.rsi14, 0) }, { h: 'RSI2', v: r => r.rsi2, f: r => fmt(r.rsi2, 0) },
       { h: '126d ret', v: r => r.r126, f: r => r.r126 == null ? '–' : pc(r.r126 * 100, 1), c: r => cls(r.r126) }, { h: 'vs SPY', v: r => r.rs_spy126, f: r => r.rs_spy126 == null ? '–' : pc(r.rs_spy126 * 100, 1), c: r => cls(r.rs_spy126) },
       { h: 'vs QQQ', v: r => r.rs_qqq126, f: r => r.rs_qqq126 == null ? '–' : pc(r.rs_qqq126 * 100, 1), c: r => cls(r.rs_qqq126) }, { h: '52w prox', v: r => r.prox52, f: r => r.prox52 == null ? '–' : fmt(r.prox52 * 100, 0) + '%' },
-      { h: 'RVOL', v: r => r.vol_ratio, f: r => fmt(r.vol_ratio, 2) }, { h: 'ADV $M', v: r => r.adv_usd, f: r => r.adv_usd == null ? '–' : fmt(r.adv_usd / 1e6, 0) },
+      { h: 'Rel. volume', v: r => r.vol_ratio, f: r => fmt(r.vol_ratio, 2) }, { h: 'ADV $M', v: r => r.adv_usd, f: r => r.adv_usd == null ? '–' : fmt(r.adv_usd / 1e6, 0) },
       { h: 'Why not BUY', l: 1, v: r => ((r.swing || {}).failed || []).join(', '), f: r => '<span class="dim">' + esc(((r.swing || {}).failed || []).slice(0, 3).join(', ')) + '</span>' }], rows, { id: 'disc', click: r => '#stock/' + r.symbol, limit: 150, tall: true });
     bindTables($('#dt'), draw);
   };
@@ -129,7 +129,7 @@ function viewPositions(root) {
   const h = S.d.holdings || [], o = (S.d.orders || []);
   root.innerHTML = `<section class="wide"><h2>Open positions (USD, with MYR)</h2>${h.length ? table([
     { h: 'Symbol', l: 1, v: r => r.symbol }, { h: 'Strategy', v: r => r.strategy_id, f: r => NAMES[r.strategy_id] }, { h: 'Qty', v: r => r.qty }, { h: 'Avg cost $', v: r => r.avg_cost_usd, f: r => fmt(r.avg_cost_usd) },
-    { h: 'Last $', v: r => r.last_price_usd, f: r => fmt(r.last_price_usd) }, { h: 'Value $', v: r => r.value_usd, f: r => fmt(r.value_usd) }, { h: 'Value RM', v: r => r.value_myr, f: r => fmt(r.value_myr) },
+    { h: 'Last $', v: r => r.last_price_usd, f: r => fmt(r.last_price_usd) }, { h: 'Price as of', v: r => r.last_bar, f: r => esc(r.last_bar || '–') + ' <span class="dim">END-OF-DAY</span>' }, { h: 'Value $', v: r => r.value_usd, f: r => fmt(r.value_usd) }, { h: 'Value RM', v: r => r.value_myr, f: r => fmt(r.value_myr) },
     { h: 'P&L $', v: r => r.unrealized_usd, f: r => fmt(r.unrealized_usd), c: r => cls(r.unrealized_usd) }, { h: 'P&L RM', v: r => r.unrealized_myr, f: r => fmt(r.unrealized_myr), c: r => cls(r.unrealized_myr) },
     { h: 'P&L %', v: r => r.unrealized_pct, f: r => pc(r.unrealized_pct), c: r => cls(r.unrealized_pct) }, { h: 'Days held', v: r => r.days_held }, { h: 'Stop', v: r => r.stop, f: r => fmt(r.stop) }, { h: 'Target', v: r => r.target, f: r => fmt(r.target) },
     { h: 'Reason', l: 1, v: r => r.reason }, { h: 'Action', l: 1, v: r => r.action }], h, { id: 'pos', click: r => '#stock/' + r.symbol }) : '<div class="dim">No open positions yet. Orders fill at the next US open (22:30/21:30 MYT) after a scan; see pending orders below.</div>'}</section>
@@ -262,7 +262,7 @@ async function route() {
   const root = $('#view'); window.scrollTo(0, 0);
   try {
     if (t === 'stock') return viewStock(root, decodeURIComponent(arg || ''));
-    ({ overview: viewOverview, discovery: viewDiscovery, positions: viewPositions, strategies: viewStrategies, research: viewResearch, activity: viewActivity, validation: viewValidation, controls: Controls.render }[t] || viewOverview)(root);
+    ({ ...{ overview: viewOverview, discovery: viewDiscovery, positions: viewPositions, strategies: viewStrategies, research: viewResearch, activity: viewActivity, validation: viewValidation, controls: Controls.render }, ...(window.V3VIEWS || {}) }[t] || viewOverview)(root);
   } catch (e) { root.innerHTML = '<section class="wide"><div class="errbox">UI error: ' + esc(e.message) + '</div></section>'; console.error(e); }
 }
 async function poll(force) {

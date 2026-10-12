@@ -31,7 +31,7 @@ dump("providers.json", [r for r in registry.stored()]); dump("monitor.json", vie
 c = db.conn()
 reps = {kind: (json.loads(r["body"]) if r else None) for kind in ("market_summary", "weekly_strategy") for r in [c.execute("SELECT body FROM reports WHERE kind=? ORDER BY period DESC LIMIT 1", (kind,)).fetchone()]}
 bt = [json.loads(r["result"]) for r in c.execute("SELECT result FROM experiments ORDER BY id DESC LIMIT 6")]
-c.close(); dump("reports.json", reps); vr = ROOT / "validation" / "results.json"; dump("validation.json", {"backtest": json.loads(vr.read_text()) if vr.exists() else None, "experiments": bt, "note": "HISTORICAL BACKTEST / OUT-OF-SAMPLE results live here only and are never combined with forward paper results."})
+c.close(); dump("reports.json", reps); vr = ROOT / "validation" / "results.json"; dump("validation.json", {"cadence_study": (json.loads((ROOT / "validation" / "cadence_study.json").read_text()) if (ROOT / "validation" / "cadence_study.json").exists() else None), "membership_check": (json.loads((ROOT / "validation" / "membership_check.json").read_text()) if (ROOT / "validation" / "membership_check.json").exists() else None), "backtest": json.loads(vr.read_text()) if vr.exists() else None, "experiments": bt, "note": "HISTORICAL BACKTEST / OUT-OF-SAMPLE results live here only and are never combined with forward paper results."})
 dump("control.json", {**control.status(), "settings": {kk: cfg[kk] for kk in ("risk_per_trade_pct", "max_position_pct", "max_exposure_pct", "min_cash_pct", "max_positions", "max_drawdown_pct", "automation_on", "manual_approval",
                       "fractional_shares", "cash_account_mode", "fx_spread_bps", "strategies", "extra_watchlist", "blocked_symbols", "entries_suspended", "suspend_reason", "buy_min_score", "atr_stop_mult")},
                       "pending_orders": [o for o in views.orders() if o["status"] == "pending"]})
@@ -50,4 +50,7 @@ dump("meta.json", {"generated_utc": now.isoformat(timespec="seconds"), "generate
                    "run_url": run_url, "run_number": gh.get("GITHUB_RUN_NUMBER"), "platform_version": config.PLATFORM_VERSION, "data_label": data.DATA_LABEL, "heartbeats": hb,
                    "mode": "PAPER TRADING / DELAYED yfinance DATA / updates on workflow runs (not real-time ticks)", "us_market": cal.us_status(now), "specials": cal.upcoming_special_days(now.date(), 75),
                    "controls_applied_count": applied, "repo": "harann02/ai-trading-lab", "control_branch": "data", "control_path": "control/commands.json", "workflow": "run.yml"})
+try:
+    from app.v3 import export as v3x; dump("v3.json", v3x.build(cfg, now))
+except Exception as e: print("v3 export failed", e); dump("v3.json", {"error": str(e)})
 print(f"exported to {out}: {len(list(D.rglob('*.json')))} json files, {n} candle files")

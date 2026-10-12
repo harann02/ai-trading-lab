@@ -1,0 +1,12 @@
+{
+ "source": "Wikipedia S&P 500 constituents + changes (free; incomplete/unofficial)",
+ "backtest_start": "2021-01-04",
+ "current_members": 503,
+ "current_members_added_after_start": 89,
+ "pct_added_after_start": 17.7,
+ "removed_since_start": 0,
+ "removed_with_usable_yfinance_history": 0,
+ "removed_names_note": "removed-names log NOT available: the free Wikipedia page no longer exposes the changes table in this layout",
+ "removed_with_history_tickers": [],
+ "reading": "A static 'current members' universe includes names that only entered the index after 2021 (selected by their later success) and omits names removed since (often losers). A complete free point-in-time membership + delisted-price history was not obtainable here, so a point-in-time universe cannot be rebuilt. The bias is MEASURED here, not removed; results stay optimistic by an unknown amount."
+}

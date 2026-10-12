@@ -59,12 +59,15 @@ def swing_candidates(prep, cfg, fxs):
     for s, f in prep["frames"].items():
         um = universe_mask(f, flt)
         pre = um & (f["close"] > f["sma200"]) & (f["sma50"] > f["sma150"]) & (f["close"] > f["sma50"])
-        if cfg.get("weekly_entries_only"): pre &= pd.Series(f.index.weekday == 4, index=f.index)
+        cad = cfg.get("entry_cadence") or ("weekly" if cfg.get("weekly_entries_only") else "daily")
+        if cad == "weekly": pre &= pd.Series(f.index.weekday == 4, index=f.index)
         for t in f.index[pre.fillna(False).to_numpy()]:
             reg = prep["regime"].get(t, "unknown")
             if reg not in cfg["allowed_regimes"]: continue
             row = f.loc[t]
-            if not scoring.entry_trigger(row)["fired"]: continue
+            trg = scoring.entry_trigger(row)
+            if not trg["fired"]: continue
+            if cad == "breakout_daily" and not (trg["type"] == "breakout" and row.get("vol_ratio") is not None and not pd.isna(row.get("vol_ratio")) and row["vol_ratio"] >= 1.5): continue
             comp = scoring.composite(row, fund=None, regime=reg, fx=fxs.get(t, 4.2), rs_pct=prep["rs_pct"].at[t, s] if not pd.isna(prep["rs_pct"].at[t, s]) else None, use_fundamentals=False, light=True)
             if not comp["minervini"]["pass"] or comp["score"] < (thr_b if reg == "bullish" else thr_s): continue
             plan = scoring.plan_levels(row, cfg, None)

@@ -20,6 +20,12 @@ def replay2(rows):
         k = r["kind"]
         if k == "FX_CONVERT":
             s["invested_myr"] += r["gross_myr"]; s["usd_received"] += r["gross_usd"]; s["fx_spread_myr"] += r["fees_myr"] or 0.0
+        elif k in ("SLEEVE_XFER_OUT", "SLEEVE_XFER_IN"):
+            # v3 internal journal entry: moves USD cash + its MYR cost basis (and the FX spread already paid) between sleeves. Not a deposit, no FX, no P&L.
+            sg = -1 if k == "SLEEVE_XFER_OUT" else 1
+            try: carried = float((json.loads(r.get("fee_detail") or "{}")).get("fx_spread_myr_carried", 0.0))
+            except Exception: carried = 0.0
+            s["invested_myr"] += sg * r["gross_myr"]; s["usd_received"] += sg * r["gross_usd"]; s["fx_spread_myr"] += sg * carried
         elif k == "BUY":
             p = pos.setdefault((sid, r["symbol"]), {"strategy_id": sid, "symbol": r["symbol"], "qty": 0.0, "cost_usd": 0.0, "first_ts": r["ts"], "fees_usd": 0.0, "spread_usd": 0.0, "slip_usd": 0.0})
             p["qty"] += r["qty"]; p["cost_usd"] += r["gross_usd"] + (r["fees_usd"] or 0)

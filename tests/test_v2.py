@@ -3,7 +3,7 @@ import json, os, sqlite3
 import numpy as np, pandas as pd, pytest
 from datetime import datetime, timezone, timedelta, date
 from conftest import make_df, FakeProvider
-from conftest_v2 import NOW_SCAN, NOW_FILL
+from conftest_v2 import NOW_SCAN, NOW_FILL, IntradayProvider
 from app import db, config, ledger, fx, portfolio, risk, trading, universe, scoring, ai, control, settings_schema as ss, calendars as cal, migrations, data, views, engine
 from app.providers import registry, base as pb
 
@@ -23,6 +23,7 @@ def env2(tmp_path, monkeypatch):
 def frames_us(n_stocks=("AAA", "BBB")):
     f = {"SPY": make_df(END, breakout=False, drift=0.0007, vol=0.004, start=400, seed=11, volume=5e7), "QQQ": make_df(END, breakout=False, drift=0.0008, vol=0.005, start=350, seed=12, volume=3e7)}
     f["AAA"] = make_df(END, seed=1, start=30, volume=4e6); f["BBB"] = make_df(END, breakout=False, drift=-0.001, seed=3, start=40, volume=4e6)
+    for i, s in enumerate(("CCC", "DDD", "EEE", "FFF", "GGG")): f[s] = make_df(END, seed=21 + i, start=30, volume=4e6)       # >=5 ranked peers so the RS percentile exists; EEE produces a swing BUY ELIGIBLE
     return f
 
 def load(frames, now=NOW_SCAN):
@@ -186,26 +187,28 @@ def test_features_reproducible():
     pd.testing.assert_frame_equal(f1, f2)
     for c in ("sma20", "sma50", "sma200", "ema12", "ema26", "rsi14", "atr14", "macd"): assert c in f1.columns, c
 
-def run_full(monkeypatch, frames=None, trade=True, now=NOW_SCAN):
-    patch_universe(monkeypatch); load(frames or frames_us(), now)
+SYMS7 = ("AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG")
+def run_full(monkeypatch, frames=None, trade=True, now=NOW_SCAN, syms=("AAA", "BBB")):
+    patch_universe(monkeypatch, syms); load(frames or frames_us(), now)
     return trading.run_scan(FakeProvider(frames or frames_us()), now, trade=trade, refresh=False, probe=False)
 
 def test_end_to_end_scan_orders_fill_and_independence(env2, monkeypatch):
-    monkeypatch.setattr(universe, "candidates", lambda cfg, now=None: ({s: {"name": s, "sources": ["x"]} for s in ("AAA", "BBB")}, {s: {"exchange": "NASDAQ"} for s in ("AAA", "BBB")}, {}))
-    r = run_full(monkeypatch); assert "aborted" not in r, r
+    monkeypatch.setattr(universe, "candidates", lambda cfg, now=None: ({s: {"name": s, "sources": ["x"]} for s in SYMS7}, {s: {"exchange": "NASDAQ"} for s in SYMS7}, {}))
+    db.set_settings({"entry_cadence": "daily"})                                                                    # v3: weekly (Fri-only) is the default; daily lets the synthetic Monday signal through
+    r = run_full(monkeypatch, syms=SYMS7); assert "aborted" not in r, r
     c = db.conn(); conv = c.execute("SELECT strategy_id, myr_amount FROM fx_conversions").fetchall(); c.close()
     alloc = {x["strategy_id"]: x["myr_amount"] for x in conv}; assert sum(alloc.values()) <= 10000 + 1e-6                 # no double allocation
-    assert set(alloc) <= {"swing", "meanrev", "baseline"} and "intraday" not in alloc
+    assert set(alloc) == {"swing"} and abs(alloc["swing"] - 10000) < 1e-6                                           # v3: swing owns 100% of the pool; no other sleeve is funded
     assert r["strategies"]["intraday"]["enabled"] is False                                                           # B disabled without feed
     c = db.conn(); n_dec = c.execute("SELECT COUNT(*) n FROM decisions").fetchone()["n"]; n_ord = c.execute("SELECT COUNT(*) n FROM orders").fetchone()["n"]
     sids = {x["strategy_id"] for x in c.execute("SELECT DISTINCT strategy_id FROM orders")}; c.close()
     assert n_ord >= 1 and None not in sids                                                                           # strategy attribution on orders
-    run_full(monkeypatch)                                                                                            # duplicate scan
+    run_full(monkeypatch, syms=SYMS7)                                                                                # duplicate scan
     c = db.conn(); assert c.execute("SELECT COUNT(*) n FROM decisions").fetchone()["n"] == n_dec and c.execute("SELECT COUNT(*) n FROM orders").fetchone()["n"] == n_ord; c.close()
     fr = frames_us(); fr2 = {k: pd.concat([v, pd.DataFrame({"open": [v.close.iloc[-1] * 1.002], "high": [v.close.iloc[-1] * 1.01], "low": [v.close.iloc[-1] * .995], "close": [v.close.iloc[-1] * 1.004], "volume": [3e6]}, index=[pd.Timestamp("2026-10-13")])]) for k, v in fr.items()}
-    p2 = FakeProvider(fr2); data.save_bars(fr2, NOW_FILL); log = trading.execute_pending(p2, NOW_FILL, refresh=False); print(log); assert log
+    p2 = IntradayProvider(fr2); data.save_bars(fr2, NOW_FILL); log = trading.execute_pending(p2, NOW_FILL, refresh=True); print(log); assert log
     c = db.conn(); fills = c.execute("SELECT COUNT(*) n FROM ledger WHERE kind='BUY' AND strategy_id IS NOT NULL").fetchone()["n"]; c.close(); assert fills >= 1
-    trading.execute_pending(p2, NOW_FILL + timedelta(minutes=10), refresh=False)                                   # re-run: no duplicate fills
+    trading.execute_pending(p2, NOW_FILL + timedelta(minutes=10), refresh=True)                                    # re-run: no duplicate fills
     c = db.conn(); assert c.execute("SELECT COUNT(*) n FROM ledger WHERE kind='BUY' AND strategy_id IS NOT NULL").fetchone()["n"] == fills; c.close()
     snap = portfolio.snapshot(NOW_FILL); assert snap["equity_myr"] == pytest.approx(10000, rel=0.03)                 # only costs/spread lost, nothing created
     assert ledger.cash() >= -1e-6 and all(s["cash_usd"] >= -1e-6 for s in snap["sleeves"].values())
@@ -221,10 +224,10 @@ def test_strategy_disabled_independently(env2, monkeypatch):
     st = db.get_settings()["strategies"]; st["swing"]["enabled"] = False; db.set_settings({"strategies": st})
     r = run_full(monkeypatch); assert r["strategies"]["swing"]["enabled"] is False and r["strategies"]["meanrev"].get("enabled", True) is not False
 
-def test_baseline_buys_once(env2, monkeypatch):
+def test_baseline_retired_creates_no_orders(env2, monkeypatch):
     monkeypatch.setattr(universe, "candidates", lambda cfg, now=None: ({"AAA": {"name": "A", "sources": ["x"]}}, {"AAA": {"exchange": "NASDAQ"}}, {}))
-    run_full(monkeypatch); c = db.conn(); n = c.execute("SELECT COUNT(*) n FROM orders WHERE strategy_id='baseline' AND side='BUY'").fetchone()["n"]; sl = c.execute("SELECT COUNT(*) n FROM orders WHERE strategy_id='baseline' AND side='SELL'").fetchone()["n"]; c.close()
-    assert n >= 1 and sl == 0
+    run_full(monkeypatch); c = db.conn(); n = c.execute("SELECT COUNT(*) n FROM orders WHERE strategy_id='baseline'").fetchone()["n"]; c.close()
+    assert n == 0                                                                                                    # v3: SPY/QQQ are shadow benchmarks only
 
 def test_allocation_validation():
     bad = {**config.DEFAULTS, "strategies": {k: {**v, "allocation_pct": 60.0} for k, v in config.DEFAULTS["strategies"].items()}}
@@ -264,7 +267,7 @@ def test_reset_requires_confirmation_and_archives(env2, tmp_path):
     assert ledger.cash() == 10000; c = db.conn(); n = c.execute("SELECT COUNT(*) n FROM ledger").fetchone()["n"]; c.close(); assert n >= 1
 
 def test_settings_schema_rejects():
-    cur = config.DEFAULTS; _, e = ss.validate_patch({"strategies": {"swing": {"allocation_pct": 90}}}, cur); assert "strategies" in e                  # sums > 100
+    cur = config.DEFAULTS; _, e = ss.validate_patch({"strategies": {"swing": {"allocation_pct": 100}, "meanrev": {"allocation_pct": 10}}}, cur); assert e                  # sums > 100 / retired sleeve needs reactivation
     _, e = ss.validate_patch({"max_positions": 0}, cur); assert e; _, e = ss.validate_patch({"extra_watchlist": ["AAPL; DROP"]}, cur); assert e
     ok, e = ss.validate_patch({"extra_watchlist": ["aapl", "msft"]}, cur); assert not e and ok["extra_watchlist"] == ["AAPL", "MSFT"]
 
@@ -278,6 +281,8 @@ def client(env2, monkeypatch, tmp_path):
 
 def test_api_auth_csrf_validation(client):
     c, h = client
+    from app.v3 import jobs; assert c.put("/api/settings", json={"max_positions": 3}, headers={**h, "X-Requested-With": "ailab"}).status_code == 409    # v3: default writer = Actions, backend is read-only
+    jobs.set_writer_mode("selfhosted", "test")
     assert c.get("/api/status").status_code == 401 and c.get("/healthz").status_code == 200
     assert c.get("/api/status", headers=h).status_code == 200 and c.get("/readyz", headers=h).json()["ok"]
     assert c.put("/api/settings", json={"max_positions": 3}, headers=h).status_code == 403                               # CSRF header missing
@@ -299,7 +304,7 @@ def test_no_secrets_in_site_or_repo():
             for f in fs:
                 if f.endswith((".js", ".html", ".py", ".md", ".yml", ".css")) and "lightweight" not in f:
                     t = open(os.path.join(dp, f), errors="ignore").read(); assert not any(b in t for b in bad), (dp, f)
-    js = open(os.path.join(root, "site_src", "controls.js")).read(); assert "sessionStorage" in js and "localStorage" not in js
+    js = open(os.path.join(root, "site_src", "controls.js")).read(); assert "sessionStorage" not in js and "localStorage" not in js and "api.github.com" not in js          # v3: no token input anywhere on the public site
 
 # ---------------------------------------------------------------- Phase 7: backtester
 def test_backtest_no_lookahead_and_costs():

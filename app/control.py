@@ -40,7 +40,39 @@ def _cmd(cmd, now):
     if t == "reset_account":
         if cmd.get("confirm") != "RESET": raise ValueError("typed confirmation must equal 'RESET'")
         return reset_account(now)
+    if t == "reactivate_strategy":
+        from .v3 import policy; return policy.reactivate(cmd.get("strategy", "meanrev"), cmd.get("confirm", ""), now)
+    if t == "decide_migration_proposal":
+        pid = int(cmd["proposal_id"]); dec = cmd.get("decision")
+        if dec not in ("APPROVED_SELL", "KEEP", "REJECTED"): raise ValueError("decision must be APPROVED_SELL|KEEP|REJECTED")
+        c = db.conn(); r = c.execute("SELECT * FROM migration_proposals WHERE id=?", (pid,)).fetchone()
+        if not r or r["status"] != "PENDING_OWNER_APPROVAL": c.close(); raise ValueError("proposal not pending")
+        c.execute("UPDATE migration_proposals SET status=?, decided_ts=?, decided_by=? WHERE id=?", (dec, _iso(), cmd.get("actor", "owner"), pid)); c.commit(); c.close()
+        if dec == "APPROVED_SELL":
+            engine.create_order(decision_key=f"MIGSELL:{pid}", decision_id=None, symbol=r["symbol"], market="US", side="SELL", qty=json.loads(r["detail"])["qty"], ref_price=0.0, stop=None, target=None,
+                                reason=f"owner-approved sale of retired-sleeve holding (migration proposal #{pid})", now=now, strategy_id=r["strategy_id"], signal_status="EXIT")
+        return {"proposal": pid, "decision": dec}
+    if t == "set_writer_mode":
+        from .v3 import jobs; jobs.set_writer_mode(cmd["mode"], cmd.get("actor", "owner")); return {"writer_mode": cmd["mode"]}
+    if t == "start_v3_experiment":
+        if cmd.get("confirm") != "START NEW EXPERIMENT": raise ValueError("confirm must equal 'START NEW EXPERIMENT'")
+        r = reset_account(now); c = db.conn(); c.execute("INSERT INTO account_epochs(ts,label,archive_path,note) VALUES(?,?,?,?)", (_iso(), "v3 fresh RM10,000 experiment", r["archived"], "explicit owner reset; previous account archived")); c.commit(); c.close(); return r
     raise ValueError(f"unknown command type {t!r}")
+
+def apply_dispatch(settings_json, command_json, actor, run_id, now):
+    """Owner controls via the GitHub Actions UI (workflow_dispatch inputs). GitHub itself authenticates the actor (write access required); the engine re-validates everything."""
+    out = []
+    if settings_json and settings_json.strip():
+        try: patch = json.loads(settings_json)
+        except Exception as e: return [{"ok": False, "error": f"settings_json invalid: {e}"}]
+        r = apply_settings(patch, actor, "workflow_dispatch", now); _record(f"dispatch-settings:{run_id}", "applied" if r["ok"] else "rejected", r); out.append({"settings": r})
+    if command_json and command_json.strip():
+        try: cmd = json.loads(command_json)
+        except Exception as e: out.append({"ok": False, "error": f"command_json invalid: {e}"}); return out
+        cid = f"dispatch-command:{run_id}"
+        try: r = _cmd(cmd, now); _record(cid, "applied", r); db.audit(f"command:{cmd.get('type')}", {**{k: v for k, v in cmd.items() if k != "confirm"}, "result": r}, actor, "workflow_dispatch"); out.append({"command": cmd.get("type"), "ok": True, **(r if isinstance(r, dict) else {})})
+        except Exception as e: _record(cid, "rejected", str(e)); db.audit(f"command_rejected:{cmd.get('type')}", {"error": str(e)}, actor, "workflow_dispatch"); out.append({"command": cmd.get("type"), "ok": False, "error": str(e)})
+    return out
 
 def reset_account(now=None):
     """Archives the whole DB first (never destructive without archive), then starts a fresh RM10,000 account with v2 schema. Settings are kept."""
