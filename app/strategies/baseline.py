@@ -7,6 +7,9 @@ from . import common as C
 SID = "baseline"; VERSION = "baseline-2.0.0"; NAME = "Buy & hold SPY/QQQ"; REQUIRES = ["eod"]
 
 def scan(ctx):
+    from ..v3 import policy
+    if not policy.new_entries_allowed(SID) or not ctx.cfg["strategies"][SID]["enabled"]:
+        return {"counts": {k: 0 for k in C.STATUSES}, "rows": [], "retired": True, "note": policy.RETIRED_WHY}
     cfg = ctx.cfg; res = {"counts": {k: 0 for k in C.STATUSES}, "rows": []}; syms = cfg.get("baseline_symbols", ["SPY", "QQQ"])
     s_ = ctx.snap["sleeves"].get(SID)
     held = set(ctx.held_syms(SID)); pend = set(ctx.pend_syms(SID))

@@ -29,7 +29,10 @@ SCHEMA = {
     "fx_spread_bps": _num(0, 200), "automation_on": _bool, "auto_trade": _bool, "manual_approval": _bool, "fractional_shares": _bool, "cash_account_mode": _bool,
     "unsettled_proceeds_reusable": _bool, "weekly_entries_only": _bool, "buy_min_score": _num(50, 100), "sideways_min_score": _num(50, 100), "min_rr": _num(0, 10),
     "extra_watchlist": _tickers, "blocked_symbols": _tickers, "baseline_symbols": _tickers,
+    "entry_cadence": lambda x: x if x in ("weekly", "daily", "breakout_daily") else (_ for _ in ()).throw(ValueError("must be weekly | daily | breakout_daily")),
+    "fill_delay_min": _num(0, 120), "max_price_age_min": _num(5, 240), "stop_extra_slippage_bps": _num(0, 200),
 }
+RETIRED_ZERO = ("meanrev", "baseline", "intraday")   # v3: allocation stays 0 unless the owner reactivates through the validated reactivate_strategy command
 
 def validate_patch(patch: dict, current: dict):
     """Returns (clean_patch, errors{key:msg}). Strategy toggles/allocations come as patch['strategies'] = {sid: {enabled, allocation_pct}} and are merged."""
@@ -43,7 +46,11 @@ def validate_patch(patch: dict, current: dict):
                 for kk, vv in (sv or {}).items():
                     try:
                         if kk == "enabled": cur[sid]["enabled"] = _bool(vv)
-                        elif kk == "allocation_pct": cur[sid]["allocation_pct"] = _num(0, 100)(vv)
+                        elif kk == "allocation_pct":
+                            cur[sid]["allocation_pct"] = _num(0, 100)(vv)
+                            if sid in RETIRED_ZERO and cur[sid]["allocation_pct"] > 0:
+                                from .v3 import policy as _p
+                                if not _p.new_entries_allowed(sid): raise ValueError(f"{sid} is research-only/retired in v3: allocation must stay 0% (reactivation needs the validated owner command)")
                         else: errs[f"strategies.{sid}.{kk}"] = "not writable"
                     except ValueError as e: errs[f"strategies.{sid}.{kk}"] = str(e)
             if sum(x["allocation_pct"] for x in cur.values()) > 100.0 + 1e-9: errs["strategies"] = "allocations sum to more than 100% (no double allocation)"

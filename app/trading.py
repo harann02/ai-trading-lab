@@ -1,7 +1,7 @@
 """v2 US-only orchestrator: discover universe -> refresh data -> regime -> allocate capital (real FX conversions) -> run independent strategy engines ->
 simulated execution (next open, delayed data) -> reconcile -> reports. The deterministic engine has sole execution authority; the AI layer only explains."""
 import json, math, traceback
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 import numpy as np, pandas as pd
 from . import db, config, data, ledger, risk, scoring, universe, fx as fxm, portfolio, calendars as cal, engine, reports, perf
 from .providers import registry, base as pb
@@ -21,9 +21,10 @@ def ensure_allocations(now, cfg=None, rate=None):
     """Converts MYR treasury -> USD sleeves per allocation_pct of NET contributed capital (idempotent: only the missing amount is converted, at a real recorded rate + spread)."""
     cfg = cfg or db.get_settings(); validate_allocations(cfg); out = []
     rows = ledger.rows(); net = sum(r["cash_delta_myr"] for r in rows if r["kind"] in ("DEPOSIT", "WITHDRAW"))
-    c = db.conn(); done = {r["strategy_id"]: r["m"] for r in c.execute("SELECT strategy_id, SUM(myr_amount) m FROM fx_conversions WHERE direction='MYR->USD' GROUP BY strategy_id")}; c.close()
+    # v3: "done" = MYR already converted INTO each sleeve, incl. internal journal transfers (SLEEVE_XFER_*), from the ledger replay (not just fx_conversions)
+    done = {sid: s_["invested_myr"] for sid, s_ in portfolio.replay2([r for r in rows if r.get("strategy_id")])["sleeves"].items()}
     for sid, st in cfg["strategies"].items():
-        if not st["enabled"]: continue
+        if not st["enabled"] or float(st["allocation_pct"]) <= 0: continue
         target = net * st["allocation_pct"] / 100.0; missing = target - (done.get(sid) or 0.0)
         if missing >= 1.0:
             rate = rate or fxm.fetch_rate(cfg, now)
@@ -151,87 +152,117 @@ def save_scan_results(now, sd, strategies, universe_table=None, regime=None):
 def _ps_insert(sid, s, stop, target, atr, now, decision_id, reason):
     c = db.conn(); c.execute("INSERT OR REPLACE INTO position_state2 VALUES(?,?,?,?,?,?,?,?,?,?)", (sid, s, stop, stop, target, None, atr, ledger.iso(now), decision_id, reason)); c.commit(); c.close()
 
+def _adv(sym):
+    df = data.load_bars(sym)                                   # FINAL daily bars only
+    return float((df["close"] * df["volume"]).tail(20).mean()) if len(df) >= 20 else None
+
+def _event_once(oid, status, note, now):
+    """Order status/reason change is recorded in order_events only when it actually changes (no spam every 15 minutes)."""
+    c = db.conn(); last = c.execute("SELECT status,note FROM order_events WHERE order_id=? ORDER BY id DESC LIMIT 1", (oid,)).fetchone()
+    if not last or last["status"] != status or last["note"] != note:
+        c.execute("INSERT INTO order_events(order_id,ts,status,note) VALUES(?,?,?,?)", (oid, ledger.iso(now), status, note)); c.commit()
+    c.close()
+
 def execute_pending(provider, now=None, refresh=True) -> list:
-    """Fills pending v2 orders only while NYSE is open and today's (delayed) bar exists; re-validates every gate at fill time; intraday stop checks."""
+    """v3 forward-paper execution (fill model fwd-paper-delayed-v1, see app/v3/execution.py). Fills pending v2 orders only from candles that were AVAILABLE to the simulator
+    (delayed feed), only in the order's eligible session, re-validating every gate at fill time. Returns [(order_id, status, detail)]. `refresh` = allowed to call the provider."""
+    from .v3 import execution as X, provenance as PV
     now = _now(now); cfg = db.get_settings(); log = []
     c = db.conn(); pend = [dict(r) for r in c.execute("SELECT * FROM orders WHERE status='pending' AND strategy_id IS NOT NULL ORDER BY id")]; c.close()
     snap0 = portfolio.snapshot(now, cfg); opened = cal.is_open("US", now)
-    watch = {o["symbol"] for o in pend} | {h["symbol"] for h in snap0["holdings"]}
+    watch = sorted({o["symbol"] for o in pend} | {h["symbol"] for h in snap0["holdings"] if not h.get("pending")})
+    cache = {}; interval = cfg.get("fill_bar_interval", "5m")
+    def bars_for(sym):
+        if sym in cache: return cache[sym]
+        out = None
+        if refresh and hasattr(provider, "intraday"):
+            try: out = X.normalize_bars(provider.intraday(sym, interval, "5d"), interval)
+            except Exception as e: db.event("WARN", "monitor", f"intraday fetch failed for {sym}: {e}", ledger.iso(now))
+        cache[sym] = out; return out
     if refresh and watch and opened:
         try:
             bars = provider.daily(sorted(watch) + [data.FX_SYMBOL], period="5d"); data.save_bars(bars, now); data.set_source("yfinance-intraday", True, f"{len(bars)} symbols (delayed)")
-        except Exception as e: data.set_source("yfinance-intraday", False, str(e)); db.event("ERROR", "monitor", f"intraday refresh failed: {e}", ledger.iso(now))
+        except Exception as e: data.set_source("yfinance-intraday", False, str(e)); db.event("ERROR", "monitor", f"daily refresh failed: {e}", ledger.iso(now))
     for o in pend:
         if (now - datetime.fromisoformat(o["created_ts"])).days >= cfg["pending_expiry_days"]:
             engine.set_order(o["id"], "canceled", "expired unfilled", now); log.append((o["id"], "canceled", "expired")); continue
-        if not opened: log.append((o["id"], "blocked", "US market closed")); continue
         if o["needs_approval"] and not o["approved"]: log.append((o["id"], "blocked", "awaiting manual approval")); continue
-        today = cal.local_now("US", now).date(); df = data.load_bars(o["symbol"], include_partial=True)
-        if len(df) == 0 or df.index[-1].date() != today: log.append((o["id"], "blocked", "no fresh bar for today (data missing/stale) - no trade")); continue
-        bar = df.iloc[-1]
-        if not (bar.open > 0): log.append((o["id"], "blocked", "invalid open price")); continue
-        log.append((o["id"],) + _fill(o, float(bar.open), now, cfg, df))
-    # intraday stop checks (positions with stops)
+        if not o.get("eligible_session"):                      # legacy v2 order without v3 stamp: stamp now (eligible session = first open after creation)
+            X.stamp_new_order(o["id"], created=datetime.fromisoformat(o["created_ts"]), signal_ts=o["created_ts"], data_ts=None, data_source="yfinance daily (legacy order)"); o["eligible_session"] = str(X.eligible_session_for(datetime.fromisoformat(o["created_ts"]))[0])
+        sh = cal.session_hours("US", date.fromisoformat(o["eligible_session"][:10]))
+        if not opened and (sh is None or now < sh[0]): log.append((o["id"], "blocked", "US market closed / order not yet eligible")); _event_once(o["id"], "pending", f"not eligible until session {o['eligible_session']} opens", now); continue
+        fd = data.load_bars(o["symbol"]); dref = float(fd["close"].iloc[-1]) if len(fd) else None
+        bars = bars_for(o["symbol"]) if opened else None          # fills only while the market is open and from candles that are actually available
+        if bars is not None and len(bars): PV.record_request(provider, "intraday", [o["symbol"]], {o["symbol"]: bars}, now, interval=interval, delay=cfg.get("fill_delay_min", 15))
+        ex = X.decide_forward_fill(o, bars, now, cfg, daily_ref=dref)
+        if ex["status"] == "lapsed":
+            engine.set_order(o["id"], "canceled", ex["reason"], now); log.append((o["id"], "canceled", "lapsed")); continue
+        if ex["status"] != "fill":
+            _event_once(o["id"], "pending", ex["reason"], now); log.append((o["id"], "blocked", ex["reason"])); continue
+        log.append((o["id"],) + _fill(o, ex["price"], now, cfg, _adv(o["symbol"]), ex=ex))
+    # resting stop orders: simulated from AVAILABLE candles after entry (not guaranteed; gaps modelled)
     snap = portfolio.snapshot(now, cfg)
     if opened:
         for h in snap["holdings"]:
+            if h.get("pending"): continue
             c = db.conn(); ps = c.execute("SELECT * FROM position_state2 WHERE strategy_id=? AND symbol=?", (h["strategy_id"], h["symbol"])).fetchone(); c.close()
-            df = data.load_bars(h["symbol"], include_partial=True); today = cal.local_now("US", now).date()
-            if not ps or ps["stop"] is None or len(df) == 0 or df.index[-1].date() != today: continue
-            bar = df.iloc[-1]
-            if bar.low <= ps["stop"]:
-                gap = bar.open < ps["stop"]; px = min(float(bar.open), ps["stop"])
-                oid = engine.create_order(decision_key=f"STOP:{h['strategy_id']}:{h['symbol']}:{today}", decision_id=None, symbol=h["symbol"], market="US", side="SELL", qty=h["qty"], ref_price=px,
-                                          stop=None, target=None, reason=f"stop {ps['stop']:.2f} hit intraday" + (" (gap through stop: filled at open)" if gap else ""), now=now, strategy_id=h["strategy_id"], signal_status="EXIT")
-                if oid:
-                    o = {"id": oid, "symbol": h["symbol"], "strategy_id": h["strategy_id"], "side": "SELL", "qty": h["qty"], "ref_price": px, "stop": None, "target": None, "decision_id": None, "reason": "stop"}
-                    log.append((oid,) + _fill(o, px, now, cfg, df, note="STOP" + (" GAP" if gap else "")))
+            if not ps or ps["stop"] is None: continue
+            bars = bars_for(h["symbol"])
+            if bars is None or len(bars) == 0: continue
+            st = X.evaluate_stop(ps["stop"], bars, ps["entry_ts"], now, cfg)
+            if not st: continue
+            today = cal.local_now("US", now).date()
+            oid = engine.create_order(decision_key=f"STOP:{h['strategy_id']}:{h['symbol']}:{today}", decision_id=None, symbol=h["symbol"], market="US", side="SELL", qty=h["qty"], ref_price=st["ref_price"],
+                                      stop=None, target=None, reason=f"stop {ps['stop']:.2f} hit: {st['note']}", now=now, strategy_id=h["strategy_id"], signal_status="EXIT",
+                                      stamp={"order_type": "STOP_MARKET (simulated, not guaranteed)", "fill_basis": "stop trigger candle", "immediate": True})
+            if oid:
+                o = {"id": oid, "symbol": h["symbol"], "strategy_id": h["strategy_id"], "side": "SELL", "qty": h["qty"], "ref_price": st["ref_price"], "stop": None, "target": None, "decision_id": None, "reason": "stop"}
+                ex = {"price_available_ts": st["price_available_ts"], "observed_ts": now.isoformat(timespec="seconds"), "fill_basis": "stop trigger candle " + st["trigger_bar"] + (" (GAP)" if st["gap"] else "")}
+                log.append((oid,) + _fill(o, st["ref_price"], now, cfg, _adv(h["symbol"]), note="STOP" + (" GAP" if st["gap"] else ""), ex=ex))
     if any(r[1] == "filled" for r in log): reconcile(now)
     return log
 
 class _Reject(Exception): pass
 
-def _fill(o, open_px, now, cfg, df, note=""):
-    s, sid = o["symbol"], o["strategy_id"]
-    adv = float((df["close"] * df["volume"]).iloc[:-1].tail(20).mean()) if len(df) > 20 else None
+def _fill(o, px_in, now, cfg, adv, note="", ex=None):
+    s, sid = o["symbol"], o["strategy_id"]; ex = ex or {}
     try:
         if o["side"] == "BUY":
             if s in cfg["blocked_symbols"]: raise _Reject("symbol manually blocked")
             if cfg["entries_suspended"]: raise _Reject("new entries suspended (drawdown limit)")
             if not cfg.get("automation_on", True): raise _Reject("automation OFF")
             if not C.is_enabled(cfg, sid): raise _Reject(f"strategy {sid} disabled/suspended")
+            from .v3 import policy as _pol
+            if not _pol.new_entries_allowed(sid): raise _Reject(f"strategy {sid}: new entries disabled ({_pol.get_flag(sid)['label']})")
             st = data.data_status(s, now)
-            if st["status"] not in ("OK",) and not (st["status"] == "STALE" and False): raise _Reject(f"data {st['status']}: {st['reason']}")
+            if st["status"] not in ("OK",): raise _Reject(f"data {st['status']}: {st['reason']}")
             if o["stop"] is not None:
-                if open_px > o["ref_price"] * (1 + cfg["max_gap_chase_pct"] / 100): raise _Reject(f"open {open_px:.2f} gapped >{cfg['max_gap_chase_pct']}% above planned entry {o['ref_price']:.2f}")
-                if open_px <= o["stop"]: raise _Reject(f"open {open_px:.2f} at/below stop {o['stop']}")
+                if px_in > o["ref_price"] * (1 + cfg["max_gap_chase_pct"] / 100): raise _Reject(f"observed price {px_in:.2f} is >{cfg['max_gap_chase_pct']}% above planned entry {o['ref_price']:.2f}")
+                if px_in <= o["stop"]: raise _Reject(f"observed price {px_in:.2f} at/below stop {o['stop']}")
             fxr = fxm.current(cfg, now)
             if not fxr["ok"]: raise _Reject("FX stale/missing")
             snap = portfolio.snapshot(now, cfg); sl = snap["sleeves"].get(sid)
             if not sl: raise _Reject("no capital allocated to strategy")
             if len({h["symbol"] for h in snap["holdings"]}) >= cfg["max_positions"] and not any(h["symbol"] == s for h in snap["holdings"]): raise _Reject("max positions reached")
-            if sid == "baseline":
-                qty = o["qty"]; fill, _, _ = risk.exec_price("BUY", open_px, adv, cfg)
-                fee = risk.us_fee_breakdown("BUY", fill * qty, qty, cfg)["total"]
-                while qty > 0 and fill * qty + fee > sl["buying_power_usd"]: qty -= 1 if not cfg["fractional_shares"] else 0.0001; fee = risk.us_fee_breakdown("BUY", fill * qty, qty, cfg)["total"]
-            else:
-                reserve = sl["equity_usd"] * cfg["min_cash_pct"] / 100
-                sz = risk.size_position_usd(equity_usd=snap["equity_usd"] or sl["equity_usd"], usable_cash_usd=max(0.0, sl["buying_power_usd"] - reserve), price=open_px, stop=o["stop"], cfg=cfg, adv_usd=adv,
-                                            sleeve_equity_usd=sl["equity_usd"], sleeve_exposure_usd=sl["positions_usd"])
-                qty = min(o["qty"], sz["qty"])
+            reserve = sl["equity_usd"] * cfg["min_cash_pct"] / 100
+            sz = risk.size_position_usd(equity_usd=snap["equity_usd"] or sl["equity_usd"], usable_cash_usd=max(0.0, sl["buying_power_usd"] - reserve), price=px_in, stop=o["stop"], cfg=cfg, adv_usd=adv,
+                                        sleeve_equity_usd=sl["equity_usd"], sleeve_exposure_usd=sl["positions_usd"]) if o["stop"] is not None else {"qty": o["qty"]}
+            qty = min(o["qty"], sz["qty"])
             if qty < (0.0001 if cfg["fractional_shares"] else 1): raise _Reject(f"resized qty {qty} < 1 share after live checks")
-            fl = portfolio.fill_us(strategy_id=sid, order_id=o["id"], symbol=s, side="BUY", qty=qty, ref_price=open_px, adv_usd=adv, now=now, note=f"order#{o['id']}", cfg=cfg)
+            fl = portfolio.fill_us(strategy_id=sid, order_id=o["id"], symbol=s, side="BUY", qty=qty, ref_price=px_in, adv_usd=adv, now=now, note=f"order#{o['id']}", cfg=cfg)
             engine.set_order(o["id"], "filled", f"filled {qty} @ {fl['price']:.4f}", now, fill_price=fl["price"], fill_ts=ledger.iso(now), qty=qty)
+            _record_exec(o["id"], ex, fl, now, cfg, adv, fxr)
             atr = None; d2 = data.load_bars(s)
             if len(d2) > 20: atr = float(scoring.feature_frame(d2).iloc[-1]["atr14"])
             _ps_insert(sid, s, o["stop"], o["target"], atr, now, o.get("decision_id"), o.get("reason"))
-            db.event("INFO", "execution", f"[{sid}] FILLED BUY {s} x{qty} @ ${fl['price']:.4f} (fees ${fl['fees_usd']:.3f}, spread ${fl['spread_usd']:.3f}, slippage ${fl['slip_usd']:.3f})", ledger.iso(now))
+            db.event("INFO", "execution", f"[{sid}] FILLED BUY {s} x{qty} @ ${fl['price']:.4f} (ref {px_in:.4f} = observed delayed price; fees ${fl['fees_usd']:.3f}, spread ${fl['spread_usd']:.3f}, slippage ${fl['slip_usd']:.3f})", ledger.iso(now))
             return ("filled", f"{qty}@{fl['price']:.4f}")
         pos = {(h["strategy_id"], h["symbol"]): h for h in portfolio.snapshot(now, cfg)["holdings"]}.get((sid, s))
         if not pos: raise _Reject("no position to sell")
         qty = min(o["qty"], pos["qty"])
-        fl = portfolio.fill_us(strategy_id=sid, order_id=o["id"], symbol=s, side="SELL", qty=qty, ref_price=open_px, adv_usd=adv, now=now, note=note or f"order#{o['id']}: {o.get('reason','')}"[:200], cfg=cfg)
+        fl = portfolio.fill_us(strategy_id=sid, order_id=o["id"], symbol=s, side="SELL", qty=qty, ref_price=px_in, adv_usd=adv, now=now, note=note or f"order#{o['id']}: {o.get('reason','')}"[:200], cfg=cfg)
         engine.set_order(o["id"], "filled", f"filled {qty} @ {fl['price']:.4f}", now, fill_price=fl["price"], fill_ts=ledger.iso(now))
+        _record_exec(o["id"], ex, fl, now, cfg, adv, fxm.current(cfg, now))
         left = {(h["strategy_id"], h["symbol"]) for h in portfolio.snapshot(now, cfg)["holdings"]}
         if (sid, s) not in left:
             c = db.conn(); c.execute("DELETE FROM position_state2 WHERE strategy_id=? AND symbol=?", (sid, s)); c.commit(); c.close()
@@ -241,6 +272,11 @@ def _fill(o, open_px, now, cfg, df, note=""):
         engine.set_order(o["id"], "rejected", str(e), now); db.event("WARN", "execution", f"order #{o['id']} {s} REJECTED: {e}", ledger.iso(now)); return ("rejected", str(e))
     except Exception as e:
         engine.set_order(o["id"], "rejected", f"error: {e}", now); db.event("ERROR", "execution", f"order #{o['id']} {s} error: {e}", ledger.iso(now)); return ("rejected", str(e))
+
+def _record_exec(oid, ex, fl, now, cfg, adv, fxr):
+    from .v3 import execution as X
+    try: X.record_fill_fields(oid, {**ex, "price_available_ts": ex.get("price_available_ts")}, {**fl, "fx": (fxr or {}).get("rate")}, now, spread_bps=risk.half_spread_bps(adv, cfg))
+    except Exception as e: db.event("WARN", "execution", f"could not store execution evidence for order #{oid}: {e}", ledger.iso(now))
 
 # ------------------------------------------------------------------ reconcile
 def reconcile(now=None):

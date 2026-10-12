@@ -62,7 +62,10 @@ def m2_v2_core(c):
         c.execute("INSERT INTO order_events(order_id,ts,status,note) VALUES(?,?,?,?)", (o[0], now, "canceled", "superseded by v2.0 migration"))
     c.execute("INSERT INTO events(ts,level,source,message) VALUES(?,?,?,?)", (now, "INFO", "migration", "v2.0 migration applied: Bursa archived read-only, US-only universe, USD/FX/strategy tables created"))
 
-MIGRATIONS = [(1, "v1_baseline", m1_baseline), (2, "v2_core", m2_v2_core)]
+def m3_v3(c):
+    from .v3 import migrate; return migrate.m3_v3_core(c)
+
+MIGRATIONS = [(1, "v1_baseline", m1_baseline), (2, "v2_core", m2_v2_core), (3, "v3_core", m3_v3)]
 LATEST = MIGRATIONS[-1][0]
 
 def current_version(c) -> int:
@@ -95,6 +98,8 @@ def apply_all(path: str) -> list:
         for v, name, fn in MIGRATIONS:
             if v <= cur: continue
             arch = archive_before(path, v) if v > 1 else None
+            if v == 3:
+                from .v3 import migrate as _m3; _m3.create_schema(c)
             try:
                 c.execute("BEGIN"); fn(c)
                 c.execute("INSERT INTO schema_migrations VALUES(?,?,?)", (v, name, datetime.now(timezone.utc).isoformat(timespec="seconds"))); c.commit()

@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 ALGO_VERSION = "ailab-1.1.0"      # legacy scoring/swing algorithm id (math unchanged in v2; kept for audit continuity)
-PLATFORM_VERSION = "2.0.0"
+PLATFORM_VERSION = "3.0.0"
 ROOT = Path(__file__).resolve().parent.parent
 
 def _load_env(path=None):
@@ -80,12 +80,24 @@ DEFAULTS = {
     "unsettled_proceeds_reusable": False,
     "settlement_days": 1,                # US equities T+1
     "spread_model": {"tiers": [[1e9, 1.0], [2e8, 2.0], [5e7, 4.0], [0.0, 8.0]], "unit": "half-spread bps by 20d ADV USD tier (MODEL, not a quote)"},
+    # v3.0: swing = primary strategy with 100% of the trading pool. Mean reversion = RESEARCH ONLY (allocation 0, new entries blocked by strategy_flags).
+    # baseline = retired as a real-capital sleeve (SPY/QQQ are SHADOW benchmarks, see app/v3/shadow.py). Intraday disabled.
     "strategies": {
-        "swing": {"enabled": True, "allocation_pct": 30.0},
-        "meanrev": {"enabled": True, "allocation_pct": 30.0},
-        "baseline": {"enabled": True, "allocation_pct": 40.0},     # 40%: whole-share SPY/QQQ (~$750-780/share) needs >= ~$800 of USD
+        "swing": {"enabled": True, "allocation_pct": 100.0},
+        "meanrev": {"enabled": True, "allocation_pct": 0.0},
+        "baseline": {"enabled": False, "allocation_pct": 0.0},
         "intraday": {"enabled": False, "allocation_pct": 0.0},
     },
+    # ---------------- v3 additions ----------------
+    "entry_cadence": "weekly",           # weekly | daily | breakout_daily  (documented experiment; weekly stays default unless evidence is credible, see docs/ENTRY_CADENCE_STUDY.md)
+    "fill_delay_min": 15,                # assumed data delay of the free intraday feed (minutes after bar end before a bar counts as AVAILABLE to the simulator)
+    "fill_bar_interval": "5m",
+    "max_price_age_min": 45,             # newest available intraday bar must be at most this old to fill (else awaiting-data, never a retroactive fill)
+    "stop_extra_slippage_bps": 5.0,      # extra adverse slippage on stop-market fills (stops are NOT guaranteed)
+    "corp_action_jump_pct": 35.0,        # one-bar/overnight move beyond this with no explanation => hold fills, flag possible split/corporate action
+    "benchmark_start_myr": 10000.0,
+    "scheduler_stale_minutes": 50,       # monitor heartbeat older than this during market hours = missed run
+    "verification_required_sessions": 20,
     "baseline_symbols": ["SPY", "QQQ"],
     "extra_watchlist": [],               # symbols the owner forces into the scan (still subject to every filter)
     "universe_filters": {"min_price": 10.0, "min_adv_usd": 20e6, "min_avg_volume": 1e6, "min_history": 252, "min_vol_ann": 0.05, "max_vol_ann": 1.5,

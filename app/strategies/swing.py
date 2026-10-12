@@ -21,8 +21,14 @@ def decide(s, c, ctx):
     pb = bool(f.get("pullback")) if not pd.isna(f.get("pullback", np.nan)) else False
     C.chk(checks, "entry_trigger", trig["fired"], trig["reason"] + (" | pullback structure present (informational)" if pb else ""))
     plan = scoring.plan_levels(f, cfg, (fund or {}).get("analyst_target")) if not pd.isna(f["atr14"]) else None
-    if cfg.get("weekly_entries_only", False):
-        C.chk(checks, "weekly_swing_window", pd.Timestamp(ctx.sd).weekday() == 4, f"session {ctx.sd} ({pd.Timestamp(ctx.sd).day_name()}); new entries only on the week's closing session (Fri)")
+    cad = cfg.get("entry_cadence", "weekly")
+    if cad == "weekly":
+        C.chk(checks, "weekly_swing_window", pd.Timestamp(ctx.sd).weekday() == 4, f"session {ctx.sd} ({pd.Timestamp(ctx.sd).day_name()}); entry_cadence=weekly: new entries only on the week's closing session (Fri)")
+    elif cad == "breakout_daily":
+        vr = f.get("vol_ratio"); okb = bool(trig["fired"] and trig["type"] == "breakout" and vr is not None and not pd.isna(vr) and vr >= 1.5)
+        C.chk(checks, "breakout_confirmation", okb, f"entry_cadence=breakout_daily: needs a 20d-high breakout with volume >= 1.5x average (trigger {trig['type']}, vol ratio {None if vr is None or pd.isna(vr) else round(float(vr),2)})")
+    else:
+        C.chk(checks, "daily_entry_window", True, "entry_cadence=daily: entries may be evaluated every session (valid signals only; cash remains a valid decision)")
     qty, sz = 0, None
     if plan:
         if plan["rr"] is not None: C.chk(checks, "reward_to_risk>=min", plan["rr"] >= cfg["min_rr"], f"R:R {plan['rr']:.2f} vs {cfg['min_rr']} (target {plan['target']:.2f} from {plan['target_source']})")

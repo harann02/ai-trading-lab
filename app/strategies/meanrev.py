@@ -6,6 +6,7 @@ import json
 import numpy as np, pandas as pd
 from .. import db, config, ledger, risk, scoring, engine, reports
 from . import common as C
+from ..v3 import policy
 
 SID = "meanrev"; VERSION = "meanrev-2.0.0"; NAME = "Mean reversion"; REQUIRES = ["eod"]
 PARAMS = {"rsi2_max": 10.0, "rsi2_exit": 70.0, "atr_stop_mult": 2.0, "time_stop_days": 7, "min_rr": 0.5}
@@ -82,11 +83,15 @@ def scan(ctx):
             if not fired and n_dec >= 0 and sc < 30:
                 res["counts"]["REJECT"] += 1; res["rows"].append({"symbol": s, "status": "REJECT", "score": sc, "rsi2": None if pd.isna(f.get("rsi2")) else float(f["rsi2"]), "close": float(f["close"])}); continue
             d = decide(s, c, ctx)
-            if d["decision"] == "BUY ELIGIBLE": ctx.n_pos += 1; ctx.reserve(SID, d["plan"]["est_cost_usd"])
+            if d["decision"] == "BUY ELIGIBLE" and not policy.new_entries_allowed(SID):
+                # v3: research-only. The signal is still computed and stored (visible in the Experiment Lab) but NEVER becomes an order / reservation.
+                d["decision"] = "WATCH"; d["explanation"] = f"{s}: research signal only. {policy.RESEARCH_LABEL}. {policy.MEANREV_WHY}\n" + d.get("explanation", "")
+                d["checks"].append({"name": "new_entries_enabled", "pass": False, "detail": policy.RESEARCH_LABEL})
+            elif d["decision"] == "BUY ELIGIBLE": ctx.n_pos += 1; ctx.reserve(SID, d["plan"]["est_cost_usd"])
         res["counts"][d["decision"]] += 1; n_dec += 1
         key = f"{VERSION}:{ctx.sd}:{s}:{c['st'].get('last_bar')}"; did = C.save_signal(key, ctx.now, ctx.sd, s, SID, d); d["id"] = did
         if s in held: C.after_hold(ctx, SID, s, d, c, trailing=False)
-        if d["decision"] == "BUY ELIGIBLE" and ctx.trade and cfg["auto_trade"] and cfg.get("automation_on", True) and did:
+        if d["decision"] == "BUY ELIGIBLE" and ctx.trade and cfg["auto_trade"] and cfg.get("automation_on", True) and did and policy.new_entries_allowed(SID):
             p = d["plan"]; oid = engine.create_order(decision_key=key, decision_id=did, symbol=s, market="US", side="BUY", qty=p["qty"], ref_price=p["entry"], stop=p["stop"], target=p["target"],
                     reason=f"meanrev scan {ctx.sd} RSI2 {f['rsi2']:.1f}", now=ctx.now, needs_approval=cfg["manual_approval"], strategy_id=SID, signal_status=d["decision"], plan_json=json.dumps(p))
             if oid: d["order_id"] = oid; db.event("INFO", "order", f"[meanrev] BUY order #{oid} pending {s} x{p['qty']}", ledger.iso(ctx.now))
