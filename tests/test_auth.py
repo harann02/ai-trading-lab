@@ -36,3 +36,13 @@ def test_weekly_window_check_blocks_non_friday(env, frames):
     assert res["markets"]["BURSA"]["counts"]["BUY"] == 0
     c = db.conn(); n = c.execute("SELECT COUNT(*) n FROM orders").fetchone()["n"]; c.close(); assert n == 0
     assert config.ALGO_VERSION == "ailab-1.1.0"
+
+def test_selfhosted_serves_every_asset_index_html_loads(client):
+    """F-6 regression: v3.js / v3b.js returned 404 on the self-hosted app."""
+    import re, pathlib
+    html = (pathlib.Path(__file__).resolve().parent.parent / "site_src" / "index.html").read_text()
+    assets = re.findall(r'(?:src|href)="([A-Za-z0-9_.\-]+\.(?:js|css))"', html); assert "v3.js" in assets and "v3b.js" in assets
+    for a in assets:
+        r = client.get("/" + a, headers=hdr("alice", "s3cret-pass")); assert r.status_code == 200, (a, r.status_code)
+    assert client.get("/../app/main.py", headers=hdr("alice", "s3cret-pass")).status_code in (404, 400)
+    assert client.get("/secret.js", headers=hdr("alice", "s3cret-pass")).status_code == 404

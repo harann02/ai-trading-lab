@@ -49,3 +49,25 @@ def test_tabs_render_desktop_and_mobile(site):
                 assert not errs, errs[:5]; pg.close()
             b.close()
     finally: srv.shutdown()
+
+@pytest.mark.skipif(CHROME is None, reason="no chrome")
+def test_market_data_as_of_card_shows_real_date(site):
+    """F-4 regression: the card read md.last_final_bar (non-existent key) and showed a dash. Seed a deterministic market_data record and check the card renders THAT date, separate from the refresh time."""
+    pw = pytest.importorskip("playwright.sync_api")
+    p = site / "data" / "v3.json"; d = json.loads(p.read_text())
+    d["market_data"] = {"spy_last_final_bar": "2026-10-09", "exchange_session_date": "2026-10-09", "retrieved_utc": "2026-10-12T02:30:43+00:00", "stale": False}; p.write_text(json.dumps(d))
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(site))
+    class Q(handler.func):
+        def log_message(self, *a): pass
+    srv = socketserver.TCPServer(("127.0.0.1", 0), functools.partial(Q, directory=str(site))); port = srv.server_address[1]; threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with pw.sync_playwright() as pwr:
+            b = pwr.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]); pg = b.new_page(viewport={"width": 1440, "height": 1000})
+            pg.goto(f"http://127.0.0.1:{port}/#overview"); pg.reload(); pg.wait_for_selector("#mdcard", timeout=8000)
+            txt = pg.inner_text("#mdcard"); assert "2026-10-09" in txt and "retrieved" in txt and "–" not in txt.split("\n")[1], txt
+            assert "dashboard refreshed" in pg.inner_text("#view").lower(); b.close()
+    finally: srv.shutdown()
+
+def test_exported_market_data_has_exchange_and_retrieval_fields(site):
+    md = json.loads((site / "data" / "v3.json").read_text())["market_data"]
+    assert "spy_last_final_bar" in md and "retrieved_utc" in md and "exchange_session_date" in md
