@@ -13,7 +13,7 @@ on:
         description: 'OWNER CONTROL (optional): JSON settings patch, e.g. {"max_positions": 4}. Validated + audited by the engine. Only users with write access can run this workflow.'
         default: ""
       command_json:
-        description: 'OWNER CONTROL (optional): JSON command, e.g. {"type":"decide_migration_proposal","proposal_id":1,"decision":"KEEP"} or {"type":"reactivate_strategy","strategy":"meanrev","confirm":"I APPROVE REACTIVATION"}'
+        description: 'OWNER CONTROL (optional): JSON command, e.g. {"type":"decide_migration_proposal","proposal_id":1,"decision":"KEEP"} or {"type":"reactivate_strategy","strategy":"meanrev","confirm":"REACTIVATE meanrev"}'
         default: ""
   push:
     branches: [main]
@@ -84,7 +84,7 @@ jobs:
           AITL_FAIL_AFTER_PERSIST: "1"
           AITL_INPUT_SETTINGS: ${{ github.event.inputs.settings_json }}
           AITL_INPUT_COMMAND: ${{ github.event.inputs.command_json }}
-          AITL_ALLOW_KEYLESS: ${{ vars.AITL_ALLOW_KEYLESS }}
+          AITL_ALLOW_KEYLESS: ${{ vars.AITL_ALLOW_KEYLESS || '1' }}   # key-less Pollinations is probed every run; AI is only marked VERIFIED if the grounded-JSON probe passes
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

@@ -10,7 +10,7 @@ const Controls = (() => {
     'Resume entries after drawdown halt': { settings_json: '', command_json: '{"type":"resume_entries"}' },
     'Keep a retired-sleeve holding (migration proposal)': { settings_json: '', command_json: '{"type":"decide_migration_proposal","proposal_id":1,"decision":"KEEP"}' },
     'Approve selling a retired-sleeve holding': { settings_json: '', command_json: '{"type":"decide_migration_proposal","proposal_id":1,"decision":"APPROVED_SELL"}' },
-    'Reactivate mean reversion (needs validation to pass)': { settings_json: '', command_json: '{"type":"reactivate_strategy","strategy":"meanrev","confirm":"I APPROVE REACTIVATION"}' },
+    'Reactivate mean reversion (needs validation to pass)': { settings_json: '', command_json: '{"type":"reactivate_strategy","strategy":"meanrev","confirm":"REACTIVATE meanrev"}' },
     'Start fresh RM10,000 experiment (archives current account)': { settings_json: '', command_json: '{"type":"start_v3_experiment","confirm":"START NEW EXPERIMENT"}' },
   };
   function render() {

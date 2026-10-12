@@ -1,15 +1,22 @@
-# Strategy engines (v2.0)
+# Strategy engines (v3.0)
+> **v3 capital structure:** swing is the **PRIMARY** strategy with 100 % of the active trading pool. Mean reversion is **RESEARCH ONLY — NEW TRADES DISABLED** (0 %). SPY/QQQ buy&hold is **retired as an allocation** and lives on only as separate shadow benchmark portfolios (`docs/SHADOW_BENCHMARKS.md`). Intraday stays disabled/research-only. Existing positions of a retired sleeve keep protective monitoring and exits. Reactivation: `docs/EXPERIMENT_PROCESS.md`.
+
 Each engine is independent: own sleeve of USD capital (converted from MYR, see ACCOUNTING.md), own decisions/orders/fills tagged `strategy_id`, own metrics (win rate, max drawdown, holding period, Sharpe, Sortino, costs, return on allocated capital - `common.summary_metrics`), own enable/disable switch. Allocations must sum to <= 100% (validated; no double allocation of cash). Statuses: BUY ELIGIBLE / WATCH / HOLD / EXIT / REJECT / DATA BLOCKED.
 
-## A. Momentum & Swing (`swing`, default 30%)
+## A. Momentum & Swing (`swing`, PRIMARY, 100% of the pool)
 Rules (all measurable, all from daily bars; see SCORING.md): regime bullish (score >= 70) or sideways (>= 85); Minervini 8/8 trend template (SMA150/200 stack, SMA200 rising, SMA50>150>200, close>SMA50, >= 1.3x 52w low, within 25% of 52w high, RS percentile >= 70); entry trigger (breakout above prior 20d high with relative volume >= 1 and RSI14 <= 80, or near-high continuation); entries only on the week's closing session (`weekly_entries_only`); R:R >= 2 when a credible target exists; risk/size/exposure/cash/data checks. Stop = close - ATR14 x 4; trailing ratchet; exits: stop, SMA50 trend break (checked on the closing session), target. Score = 25 momentum + 20 fundamentals + 20 technical + 15 RS/regime + 10 liquidity + 10 risk.
-## C. Mean reversion (`meanrev`, default 30%)
+## C. Mean reversion (`meanrev`, RESEARCH ONLY — NEW TRADES DISABLED, 0%)
+Suspended because "historical testing did not demonstrate a positive net return after costs." Code, history, backtests and Experiment Lab visibility are kept; new BUY orders are blocked at scan time (`meanrev.scan`), at fill time (`trading._fill`) and by the settings validator (allocation must stay 0). Rules below are kept for research:
 Entry: close > SMA200 AND RSI(2) <= 10 AND close < SMA5 AND regime != bearish AND liquidity filters; stop = entry - 2 ATR14; exit at next open when close > SMA5, RSI2 >= 70, 7 sessions held, or stop; target shown = SMA5; min R:R 0.5. Score (documented in `meanrev.mr_score`): 40% RSI2 depth, 25% stretch below SMA5 (ATR units), 20% trend premium, 15% liquidity. Parameters fixed a priori, not tuned.
-## D. Buy & hold baseline (`baseline`, default 40%)
+## D. Buy & hold baseline (`baseline`, RETIRED as an allocation in v3 — now shadow benchmarks)
+(v2 text, kept for history:)
 Buys SPY and QQQ once (equal USD weights, greedy whole-share allocation; with fractional shares off an ETF priced above its allocation may be unaffordable - reported as REJECT, not hidden). Never sells; pays the same FX spread/spread/slippage/fees. It is the benchmark every other engine is compared with.
-## B. Intraday / scalping (`intraday`, default 0%, **DISABLED**)
+## B. Intraday / scalping (`intraday`, 0%, **DISABLED / research-only**; owner enable required; research results never mixed with forward results)
 VWAP (price+volume proxy), opening-range breakout, relative volume (vs same-clock bars of prior days) - all **price+volume PROXIES** (no order flow, bid/ask, trades or depth is available or inferred). Research/backtest only on REAL yfinance 5m candles (validated: OHLC consistency, monotonic index; fabricated candles are refused). Controls: daily loss circuit breaker 2% of sleeve, forced end-of-session liquidation, spread check (modelled), no new entries after the breaker. **Live execution is impossible** unless a provider reports real-time quotes + intraday candles + enough history AND the owner enables it AND allocation > 0 (`intraday.status`). With only yfinance (delayed) it stays off.
 ## Risk engine (shared)
 1% risk/trade; size = floor(risk budget / (entry - stop + modelled exit friction + fees)) capped by SETTLED cash after the 20% reserve, 20% single stock, sleeve exposure (80%), 5% of ADV; max 5 positions account-wide; 10% drawdown suspends new entries until manual resume; no leverage/shorts/derivatives.
 ## Experiment Lab
 `run_validation.py` -> `validation/results.json` -> dashboard Validation tab. See VALIDATION.md. No winner is declared automatically (`backtest2.verdict`).
+
+## Entry cadence (v3 setting `entry_cadence`)
+`weekly` (default; entries on the last session of the week) | `daily` | `breakout_daily` (breakout + relative volume ≥ 1.5). Cash is always a valid decision. See `docs/ENTRY_CADENCE_STUDY.md` for the pre-declared controlled test and the adoption decision.

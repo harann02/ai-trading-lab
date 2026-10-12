@@ -1,0 +1,10 @@
+# Forward Trading Verification
+
+Purpose: prove the *operation* (not the profitability) of v3 over **20 consecutive scheduled US sessions**.
+
+* **Start session:** first NYSE session whose open is after the v3 migration timestamp (`ledger_meta.v3_applied_ts`). Nothing before it counts. Tests, demo data and manual runs without a real GitHub run id never count.
+* **15 recorded items per session:** scan occurred, data retrieved, stocks evaluated, candidates, passed risk, proposed, submitted, rejected, filled, positions reconciled, P&L correct (ledger identity checks), daily report generated, errors, stale feeds, missed runs.
+* **A session QUALIFIES** if: the scheduled scan ran (success, real run id, before the next open — a catch-up scan does *not* qualify), data retrieved, stocks evaluated > 0, positions reconciled, P&L identity ok, daily report stored, 0 errors, 0 stale feeds, monitor coverage ≥ 75 % of expected 15-min slots and no gap > 120 min. **A session with no trades qualifies** if every check completed (cash is a valid decision).
+* A session with no evidence by the next open is **FAILED (missed run)**.
+* **Statuses:** NOT STARTED · IN PROGRESS · ACTION REQUIRED (latest completed session failed; streak resets) · FAILED (≥ 3 failed sessions) · **OPERATIONALLY VERIFIED** only with ≥ 20 consecutive QUALIFIED sessions (enforced in code; tests prove 19 ≠ verified).
+* Computed by `app/v3/verification.py` on every persisted run; shown on Overview (card "FORWARD TRADING VERIFICATION") and the Verification tab. Honest state at v3 launch: **0 of 20**.
