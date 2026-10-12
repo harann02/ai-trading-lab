@@ -16,6 +16,11 @@ class R:
 
 def _chat(content): return R(200, {"choices": [{"message": {"content": content}}]})
 
+def _echo_probe(*a, **k):
+    """Fake provider that answers the (nonce) probe correctly by echoing the facts in the prompt."""
+    import re
+    msg = k["json"]["messages"][-1]["content"]; facts = json.loads(msg[msg.index("{"):]); return _chat(json.dumps(facts))
+
 @pytest.fixture
 def ai_env(monkeypatch):
     ai._ACTIVE.clear(); monkeypatch.delenv("AITL_LLM_DISABLED", raising=False)
@@ -25,9 +30,10 @@ def ai_env(monkeypatch):
 def test_ai_template_mode_when_no_key(env2, ai_env):
     st = ai.status(env={}); assert st["state"] == "AI TEMPLATE MODE" and st["mode"] == "template" and st["keys_exposed"] is False
 
-def test_ai_verified_only_after_real_grounded_probe(env2, ai_env, monkeypatch):
-    monkeypatch.setattr(ai.requests, "post", lambda *a, **k: _chat('{"ticker":"PROBE","price_usd":123.45,"score":71.5}'))
-    st = ai.status(env={"GROQ_API_KEY": "gsk_SECRET123"}); assert st["state"] == "AI ACTIVE — VERIFIED" and st["provider"] == "groq" and st["model"]
+def test_ai_probe_alone_is_not_verified(env2, ai_env, monkeypatch):
+    monkeypatch.setattr(ai.requests, "post", _echo_probe)
+    st = ai.status(env={"GROQ_API_KEY": "gsk_SECRET123"}); assert st["state"] == "TEMPLATE FALLBACK ACTIVE" and "VERIFIED" not in st["state"] + st["label"].replace("NOT VERIFIED", "") and st["provider"] == "groq" and st["model"]
+    assert st["indicators"]["provider_reachable"]["ok"] and st["indicators"]["genuine_ai_output"]["accepted_count"] == 0 and st["indicators"]["template_fallback"]["active"]
     assert "SECRET123" not in json.dumps(st)
 
 def test_ai_plain_ok_is_not_verified(env2, ai_env, monkeypatch):

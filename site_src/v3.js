@@ -12,11 +12,27 @@ const V3 = (() => {
     return `<div class="card wide2" onclick="location.hash='#verification'" style="cursor:pointer"><div class="l">FORWARD TRADING VERIFICATION</div><div class="v ${sev(x.status || '')}">${esc(x.status || 'NOT STARTED')}</div>
       <div class="s">${n} / ${req} qualifying consecutive sessions · start session ${esc(x.start_session || 'not yet')} · failed ${x.failed_sessions || 0}</div><div class="bar"><i style="width:${Math.min(100, n / req * 100) * 1.6}px"></i></div></div>`;
   }
+  function aiSub(a) {
+    const i = a.indicators || {}, o = i.genuine_ai_output || {}, r = i.provider_reachable || {}, t = i.template_fallback || {}, u = i.ai_unavailable || {};
+    return `provider ${r.ok ? 'reachable' : 'NOT reachable'} · accepted AI output: ${o.accepted_count ?? 0} (last ${o.window_days || 7}d)${o.last_accepted_ts ? ', last ' + esc(myt(o.last_accepted_ts)) : ''} · template fallback ${t.active ? 'ACTIVE' : 'off'}${u.active ? ' · UNAVAILABLE' : ''}`;
+  }
+  function aiPanel(a) {
+    const i = a.indicators || {}, o = i.genuine_ai_output || {}, r = i.provider_reachable || {}, t = i.template_fallback || {}, u = i.ai_unavailable || {}, w = a.output_window || {};
+    const chip = (ok, yes, no) => `<span class="chip ${ok ? 'ok' : 'bad'}">${ok ? yes : no}</span>`;
+    return `<section class="wide" id="aipanel"><h2>AI status — four separate indicators <span class="tag ${sev(a.state || '')}">${esc(a.state || '–')}</span></h2><div class="note">${esc(a.label || '')}</div>
+      <div class="cards k">
+      <div class="card"><div class="l">1 · Provider reachable</div><div class="v">${chip(r.ok, 'YES', 'NO')}</div><div class="s">${esc(a.provider ? a.provider + '/' + a.model : '')} ${esc(r.detail || '')}</div></div>
+      <div class="card"><div class="l">2 · Genuine AI output accepted (${o.window_days || 7}d)</div><div class="v ${o.accepted_count ? 'ok' : 'warn'}">${o.accepted_count ?? 0}</div><div class="s">last accepted: ${o.last_accepted_ts ? esc(myt(o.last_accepted_ts)) : 'never'} · rejected ${o.rejected_count ?? 0} · failed ${o.failed_count ?? 0}</div></div>
+      <div class="card"><div class="l">3 · Template fallback active</div><div class="v">${chip(!t.active, 'NO', 'YES')}</div><div class="s">${t.template_count ?? 0} template texts in window${t.last_template_ts ? ' · last ' + esc(myt(t.last_template_ts)) : ''}</div></div>
+      <div class="card"><div class="l">4 · AI unavailable / failed</div><div class="v">${chip(!u.active, 'NO', 'YES')}</div><div class="s">${u.failed_count ?? 0} failed calls in window</div></div></div>
+      ${(o.rejected_reasons || []).length ? `<div class="note">Rejected / failed reasons: ${(o.rejected_reasons || []).map(x => esc(x.reason) + ' ×' + x.count).join('; ')}</div>` : ''}
+      <div class="note">"VERIFIED" appears only when at least one model-written report/memo was accepted by the number validator in the last ${o.window_days || 7} days. A passing provider probe alone is NOT verification. The AI only explains; the rules engine decides.</div></section>`;
+  }
   function strip() {
     const a = v().ai || {}, sc = v().scheduler || {}, md = v().market_data || {}, meta = AITL.S.d.meta || {};
     return `<section class="wide"><h2>System status <span class="tag">v${esc(v().version || '3')}</span></h2><div class="cards k">
       ${verifCard()}
-      <div class="card"><div class="l">AI engine</div><div class="v ${sev(a.state || '')}" style="font-size:13px">${esc(a.state || '–')}</div><div class="s">${esc(a.provider ? a.provider + '/' + a.model : 'templates (labeled)')}</div></div>
+      <div class="card" id="aicard"><div class="l">AI engine</div><div class="v ${sev(a.state || '')}" style="font-size:13px">${esc(a.state || '–')}</div><div class="s">${aiSub(a)}</div></div>
       <div class="card" onclick="location.hash='#health'" style="cursor:pointer"><div class="l">Scheduler health</div><div class="v ${sev(sc.status || '')}" style="font-size:13px">${esc(sc.status || '–')}</div><div class="s">missed 26h: ${sc.n_missed_26h ?? '–'} · last ok ${esc(ago((sc.last_successful_run || {}).started_ts))}</div></div>
       <div class="card"><div class="l">Dashboard refreshed</div><div class="v" style="font-size:13px">${esc(myt(meta.generated_utc))}</div><div class="s">${esc(ago(meta.generated_utc))} · run ${esc(meta.run_number || 'local')}</div></div>
       <div class="card" id="mdcard"><div class="l">Market data as of</div><div class="v" style="font-size:13px">${esc(md.spy_last_final_bar || md.exchange_session_date || '–')}</div><div class="s">exchange session (final bar) · retrieved ${esc(md.retrieved_utc ? myt(md.retrieved_utc) : 'n/a')} · ${md.stale ? 'STALE' : 'fresh'}</div></div>
@@ -86,7 +102,7 @@ const V3 = (() => {
   function reports(root) {
     const d = v().daily_reports || [], w = v().weekly_eval, ai = v().ai || {};
     const money = (x, p = 'RM') => x == null ? '–' : p + fmt(x);
-    root.innerHTML = `<section class="wide"><h2>Daily AI reports <span class="tag">${esc(ai.state || '')}</span></h2>${d.length ? d.map((r, i) => { const f = r.facts, p = f.portfolio; return `<details ${i === 0 ? 'open' : ''}><summary><b>${esc(f.session)}</b> · equity ${money(p.equity_myr)} · total P&amp;L ${money(p.total_pnl_myr)} (${pc(p.total_return_pct)}) · ${esc(r.commentary_mode)}</summary>
+    root.innerHTML = aiPanel(ai) + `<section class="wide"><h2>Daily AI reports <span class="tag">${esc(ai.state || '')}</span></h2>${d.length ? d.map((r, i) => { const f = r.facts, p = f.portfolio; return `<details ${i === 0 ? 'open' : ''}><summary><b>${esc(f.session)}</b> · equity ${money(p.equity_myr)} · total P&amp;L ${money(p.total_pnl_myr)} (${pc(p.total_return_pct)}) · ${esc(r.commentary_mode)}</summary>
       <div class="memo">${esc(r.commentary)}</div>
       <div class="cards k"><div class="card"><div class="l">Value</div><div class="v">${money(p.equity_myr)}</div><div class="s">USD ${fmt(p.equity_usd)}</div></div><div class="card"><div class="l">Today P&amp;L</div><div class="v ${cls(p.today_pnl_myr)}">${money(p.today_pnl_myr)}</div></div><div class="card"><div class="l">Cash USD</div><div class="v">${fmt(p.cash_usd)}</div><div class="s">settled ${fmt(p.settled_cash_usd)} · unsettled ${fmt(p.unsettled_cash_usd)}</div></div><div class="card"><div class="l">Exposure</div><div class="v">${fmt(p.exposure_pct, 1)}%</div></div></div>
       <h3>Trades / order events</h3>${(f.trades_and_orders || []).map(t => `<div>${esc(t.symbol)} ${esc(t.side)} ${esc(t.qty)} · ${esc(t.status)} · ${esc(t.reason || '')}</div>`).join('') || '<div class="dim">none</div>'}
