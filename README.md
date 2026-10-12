@@ -6,20 +6,21 @@ No broker connection, no credentials in the repo or the frontend, the system can
 * Live site: https://harann02.github.io/ai-trading-lab/  (**read-only** — no token entry; owner controls via GitHub Actions inputs, see docs/CONTROLS.md)
 * Engine/ledger state lives on branch `data` (`ailab.db`, `control/commands.json`); code on `main`; GitHub Actions (`.github/workflows/run.yml`) runs scans/monitors and publishes the JSON snapshot to Pages.
 
-> **v3.0** (see `docs/V2_VS_V3.md`, `docs/V3_AUDIT.md`, `docs/MIGRATION_V3.md`): swing = primary (100 % of the pool), mean reversion research-only, SPY/QQQ as shadow benchmarks, delayed-execution fill model, scheduler heartbeats + watchdog, forward-verification module (0/20 at launch), verified AI status, read-only Pages. Table below describes the v2 base that still applies unless v3 docs say otherwise.
+> **v3.0** is the current system (see `docs/V2_VS_V3.md`, `docs/V3_AUDIT.md`, `docs/MIGRATION_V3.md`). The earlier v2.0 description is kept only as a clearly labelled historical section in `docs/V2_VS_V3.md`.
 
-## What v2.0 was / base behaviour
-| Area | v2.0 behaviour (docs) |
+## What v3.0 is (current configuration)
+| Area | v3.0 behaviour |
 |---|---|
-| Market | **US only** (NASDAQ / NYSE / NYSE American). Bursa is retired: no screening, schedules, brokerage/lot rules, KLCI benchmark, UI selection or cron jobs. Old Bursa records are kept **read-only** (`archived_records`, `bursa_archive_decisions`, pre-migration DB copy in `archive/`). |
-| Universe | Discovered automatically: S&P 500 (Wikipedia) + Nasdaq-100 (Nasdaq API, Wikipedia fallback) + Nasdaq Trader exchange directory; cached; filters: exchange, no ETFs/test issues, price >= $10, 50d avg volume >= 1M, 20d dollar volume >= $20M, vol sanity 5-150% annualised, >= 252 bars. Nothing is hard-coded as a recommendation. Rejections and reasons are stored (`universe_members`). |
-| Money | Start **RM10,000** (ledger DEPOSIT in MYR). The treasury is converted to USD sleeves at a **recorded real USDMYR=X rate + configurable spread (default 30 bps)**; each conversion is a ledger row + `fx_conversions` audit row. Display uses mid (never charges spread). Stock return vs currency gain/loss are reported separately. See `docs/ACCOUNTING.md`. |
-| Cash rules | Whole shares by default (`fractional_shares` off), cash-account mode, T+1 settlement (NYSE calendar), unsettled proceeds not reusable (configurable), US fees: $0 commission (configurable) + SEC fee and FINRA TAF on sells, modelled half-spread by liquidity tier + slippage. |
-| Strategies | Independent engines with their own capital sleeve, strategy_id on decisions/orders/fills, own metrics: **A swing** (30%), **C mean reversion** (30%), **D buy&hold SPY/QQQ baseline** (40%), **B intraday** (0%, DISABLED, research only). `docs/STRATEGIES.md`. |
-| Providers | `yfinance` (full), `alpaca` and `polygon` adapters (activate only with env keys, capabilities probed; **UNTESTED here: no keys**). Missing capability => strategy auto-disabled; stale data blocks trading. `docs/DATA_PROVIDERS.md`. |
-| AI layer | Explains verified data only; never decides. Providers by env (`XAI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`, any OpenAI-compatible endpoint via `AITL_LLM_API_KEY`+`AITL_LLM_BASE_URL`, free GitHub Models via `GITHUB_TOKEN`); otherwise template text labelled "template, no LLM". Every prompt/response/source is logged (`llm_log`); numbers in LLM output are verified against the source. |
-| Dashboard | Dark terminal, responsive; KPI cards, discovery table (sort/search/filter), stock page (candles, SMA/VWAP-proxy/RSI/MACD, trade markers, score breakdown, memo), positions, strategies, research feed, activity monitor, validation lab, owner controls. US schedule shown in MYT. |
-| Controls | `docs/CONTROLS.md`: owner token (sessionStorage only) -> Contents API writes `control/commands.json` on `data` -> `workflow_dispatch` -> engine validates, applies, audits -> page auto-polls. **Not real time: updates happen on workflow runs.** |
+| Market | **US only** (NYSE / NASDAQ / NYSE American). Bursa retired. Free yfinance data: end-of-day final bars + delayed (>=15 min) 5-minute candles, always labelled; never real-time. |
+| Allocation | **Swing = 100 % of the trading pool** (the only strategy allowed to open new forward-paper positions). Mean reversion = **RESEARCH ONLY — TRADING DISABLED** (0 %). Intraday = **RESEARCH ONLY — TRADING DISABLED** (0 %). The old SPY/QQQ baseline sleeve is retired. |
+| Benchmarks | **SPY and QQQ shadow portfolios** (virtual RM10,000, same start/FX/costs, separate tables, never trading capital). |
+| Risk limits | 1 % risk per trade, 20 % max per stock, 80 % max exposure, 20 % minimum cash, max 5 positions, 10 % drawdown suspension, no leverage/shorts/derivatives. Settings are owner-adjustable only inside audited safe bounds (`app/settings_schema.py`; override is recorded in `audit_log`). |
+| Money | Start **RM10,000** (ledger DEPOSIT in MYR) converted to USD at a recorded USDMYR rate + 30 bps spread; whole shares (fractional OFF by default); T+1 settlement; modelled fees/spread/slippage. `docs/ACCOUNTING.md`. |
+| Execution | Delayed forward-paper fill model: orders become eligible next NYSE session and fill only from already-observable candles. `docs/EXECUTION_MODEL.md`. |
+| AI layer | Explains verified data only; never decides. Four separate indicators (provider reachable / genuine AI output accepted / template fallback active / AI unavailable). "VERIFIED" is shown only when a model-written report was accepted by the validators in the last 7 days. `docs/AI_SETUP.md`. |
+| Persistence | Ledger DB on branch `data` via compare-and-swap, hash-chain-verified saves (`app/persist.py`, `docs/PERSISTENCE.md`); rolling daily snapshots + append-only `ledger-log` branch. |
+| Controls | Public dashboard is **read-only** (no token input). Owner changes go through GitHub Actions "Run workflow" inputs (`settings_json` / `command_json`) or the control file on branch `data`; the engine re-validates and audits everything (`docs/CONTROLS.md`). Strategy status is shown as "available for research" vs "enabled for forward-paper execution". |
+| Verification | Forward verification counts only sessions run by the cron `schedule` event; manual/push runs are shown separately and never count as unattended evidence. Autonomous trading is **not** verified until the 20-session requirement is met. |
 
 ## Quick start (local)
 ```bash

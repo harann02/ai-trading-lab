@@ -26,7 +26,7 @@ def test_v3_defaults_capital_structure():
 
 def test_mean_reversion_cannot_open_and_is_labeled(env2, monkeypatch):
     assert policy.new_entries_allowed("meanrev") is False and policy.new_entries_allowed("swing") is True
-    f = policy.get_flag("meanrev"); assert f["label"] == "RESEARCH ONLY — NEW TRADES DISABLED" and "did not demonstrate a positive net return after costs" in f["explanation"]
+    f = policy.get_flag("meanrev"); assert f["label"] == "RESEARCH ONLY — TRADING DISABLED" and "did not demonstrate a positive net return after costs" in f["explanation"]
     monkeypatch.setattr(universe, "candidates", lambda cfg, now=None: ({s: {"name": s, "sources": ["x"]} for s in SYMS7}, {s: {"exchange": "NASDAQ"} for s in SYMS7}, {}))
     db.set_settings({"entry_cadence": "daily"}); run_full(monkeypatch, syms=SYMS7)
     c = db.conn(); n = c.execute("SELECT COUNT(*) n FROM orders WHERE strategy_id IN ('meanrev','baseline','intraday')").fetchone()["n"]; c.close(); assert n == 0

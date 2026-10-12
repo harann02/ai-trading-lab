@@ -1,3 +1,5 @@
+> **HISTORICAL (v2.0-era audit).** This document audits the v2.0 system (30/30/40 allocation, browser-token controls). It does not describe the current v3.0 configuration; see README.md and docs/V2_VS_V3.md.
+
 # V3 audit of v2.0 (what was real, partial, or docs-only)
 
 Method: read the code on `main` (v2.0.0), ran the 79-test suite, inspected the live workflow/CI runs and the `data` branch DB. Status = **Implemented** (works + tested), **Partial** (works with a defect/limit listed), **Docs-only** (described but not enforced), **Missing**.

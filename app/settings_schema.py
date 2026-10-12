@@ -32,12 +32,29 @@ SCHEMA = {
     "entry_cadence": lambda x: x if x in ("weekly", "daily", "breakout_daily") else (_ for _ in ()).throw(ValueError("must be weekly | daily | breakout_daily")),
     "fill_delay_min": _num(0, 120), "max_price_age_min": _num(5, 240), "stop_extra_slippage_bps": _num(0, 200),
 }
+# Sane bounds (audit F-9). The CURRENT effective defaults (20 / 80 / 20 / 5 / 1) are inside them; going outside needs patch["owner_limit_override"]=true, which is written to the audit log.
+GUARD = {"max_position_pct": ("<=", 25.0), "min_cash_pct": (">=", 10.0), "max_exposure_pct": ("<=", 90.0), "risk_per_trade_pct": ("<=", 2.0), "max_positions": ("<=", 8)}
+
+def _guard(clean, override, errs):
+    out = {}
+    for k, (op, lim) in GUARD.items():
+        if k not in clean: continue
+        bad = clean[k] > lim if op == "<=" else clean[k] < lim
+        if bad:
+            if override: out[k] = {"value": clean[k], "bound": f"{op} {lim}"}
+            else: errs[k] = f"outside the safe bound ({op} {lim}); set owner_limit_override=true in the same patch to accept (audited)"
+    if out:
+        try:
+            from . import db; db.audit("risk_limit_override", out, "owner", "control")
+        except Exception: pass
+    return out
+
 RETIRED_ZERO = ("meanrev", "baseline", "intraday")   # v3: allocation stays 0 unless the owner reactivates through the validated reactivate_strategy command
 
 def validate_patch(patch: dict, current: dict):
     """Returns (clean_patch, errors{key:msg}). Strategy toggles/allocations come as patch['strategies'] = {sid: {enabled, allocation_pct}} and are merged."""
-    clean, errs = {}, {}
-    for k, v in (patch or {}).items():
+    clean, errs = {}, {}; patch = dict(patch or {}); override = patch.pop("owner_limit_override", False) is True
+    for k, v in patch.items():
         if k == "strategies":
             cur = {s: dict(x) for s, x in current["strategies"].items()}
             if not isinstance(v, dict): errs[k] = "must be an object"; continue
@@ -60,4 +77,5 @@ def validate_patch(patch: dict, current: dict):
             except ValueError as e: errs[k] = str(e)
         elif k in ("entries_suspended", "suspend_reason", "dd_baseline_ts"): errs[k] = "controlled by the risk engine (use the resume command)"
         else: errs[k] = "unknown or not owner-writable"
+    _guard(clean, override, errs)
     return clean, errs

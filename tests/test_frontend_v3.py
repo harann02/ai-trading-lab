@@ -46,6 +46,7 @@ def test_tabs_render_desktop_and_mobile(site):
                     assert pg.evaluate("document.documentElement.scrollWidth") <= vp["width"] + 20, (t, vp, pg.evaluate("document.documentElement.scrollWidth"))
                 pg.goto(f"http://127.0.0.1:{port}/#verification"); pg.reload(); pg.wait_for_selector("#view section"); assert "FORWARD TRADING VERIFICATION" in pg.inner_text("#view") and "NOT STARTED" in pg.inner_text("#view")
                 pg.goto(f"http://127.0.0.1:{port}/#controls"); pg.reload(); pg.wait_for_selector("#view section"); assert pg.query_selector("input[type=password]") is None and pg.query_selector("#tok") is None and "READ-ONLY" in pg.inner_text("#view")
+                ct = pg.inner_text("#view"); assert ct.upper().count("RESEARCH ONLY — TRADING DISABLED") >= 2 and "ENABLED FOR FORWARD-PAPER EXECUTION" in ct.upper() and "AVAILABLE FOR RESEARCH" in ct.upper()
                 assert not errs, errs[:5]; pg.close()
             b.close()
     finally: srv.shutdown()

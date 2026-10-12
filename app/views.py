@@ -29,7 +29,7 @@ def kpis(cfg=None, n=None):
         cutoff = (n.astimezone(ledger.MYT).date() - timedelta(days=days)).isoformat(); base = [r for r in cv if r["date"] <= cutoff]
         b = base[-1]["equity_myr"] if base else cv[0]["equity_myr"]; return (eq / b - 1) * 100
     s = pd.Series({r["date"]: r["equity_myr"] for r in cv}); mdd = float((s / s.cummax() - 1).min() * 100) if len(s) > 1 else 0.0
-    sl = snap["sleeves"]; active = [k for k, v in cfg["strategies"].items() if v["enabled"] and k != "intraday"]
+    sl = snap["sleeves"]; from .v3 import policy as _pol; active = _pol.forward_active(cfg)      # only strategies that may open NEW forward-paper trades (swing)
     legacy_cash = snap["cash_myr"]; usd_cash = sum(x["cash_usd"] for x in sl.values()); settled = sum(x["settled_cash_usd"] for x in sl.values()); uns = sum(x["unsettled_cash_usd"] for x in sl.values())
     return {"starting_capital_myr": start, "net_contributions_myr": net, "equity_myr": eq, "equity_usd": snap["equity_usd"], "usdmyr": fx, "fx": snap["fx"],
             "cash_myr": legacy_cash, "cash_usd": usd_cash, "settled_cash_usd": settled, "unsettled_cash_usd": uns, "cash_total_myr": legacy_cash + (usd_cash * fx if fx else 0),
