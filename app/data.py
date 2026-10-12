@@ -119,6 +119,14 @@ def parse_info(info: dict) -> dict:
             "analyst_target": g("targetMeanPrice") if n_an >= 3 else None, "analysts": n_an,
             "name": g("shortName") or g("longName")}
 
+def pit_snapshot(c, symbol, data):
+    """Forward-accumulating POINT-IN-TIME fundamentals archive (append-only): each fetched record is kept with its retrieval timestamp so future backtests can use only what was known at each date.
+    Free sources have no historical point-in-time fundamentals; this table starts accumulating now and can NOT be back-filled."""
+    c.execute("CREATE TABLE IF NOT EXISTS fundamentals_pit(symbol TEXT NOT NULL, fetched_at TEXT NOT NULL, data TEXT NOT NULL, source TEXT DEFAULT 'yfinance .info (current values at fetch time)', PRIMARY KEY(symbol, fetched_at))")
+    c.execute("CREATE TRIGGER IF NOT EXISTS fpit_no_update BEFORE UPDATE ON fundamentals_pit BEGIN SELECT RAISE(ABORT,'fundamentals_pit is append-only'); END")
+    c.execute("CREATE TRIGGER IF NOT EXISTS fpit_no_delete BEFORE DELETE ON fundamentals_pit BEGIN SELECT RAISE(ABORT,'fundamentals_pit is append-only'); END")
+    c.execute("INSERT OR IGNORE INTO fundamentals_pit(symbol,fetched_at,data) VALUES(?,?,?)", (symbol, data["fetched_at"], json.dumps(data)))
+
 def get_fundamentals(symbol, provider, now=None, ttl_days=7, fetch=True) -> dict | None:
     now = now or datetime.now(timezone.utc)
     c = db.conn(); r = c.execute("SELECT fetched_at,data FROM fundamentals WHERE symbol=?", (symbol,)).fetchone(); c.close()
@@ -129,7 +137,8 @@ def get_fundamentals(symbol, provider, now=None, ttl_days=7, fetch=True) -> dict
         data = parse_info(provider.info(symbol)); data["fetched_at"] = now.isoformat(timespec="seconds")
         if all(data.get(k) is None for k in ("roe", "pe", "profit_margin", "revenue_growth")) and r: return json.loads(r["data"])
         c = db.conn(); c.execute("INSERT INTO fundamentals VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET fetched_at=excluded.fetched_at,data=excluded.data",
-                                 (symbol, data["fetched_at"], json.dumps(data))); c.commit(); c.close()
+                                 (symbol, data["fetched_at"], json.dumps(data)))
+        pit_snapshot(c, symbol, data); c.commit(); c.close()
         return data
     except Exception as e:
         return json.loads(r["data"]) if r else None
