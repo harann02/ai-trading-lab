@@ -281,6 +281,8 @@ def client(env2, monkeypatch, tmp_path):
 
 def test_api_auth_csrf_validation(client):
     c, h = client
+    from app.v3 import jobs; assert c.put("/api/settings", json={"max_positions": 3}, headers={**h, "X-Requested-With": "ailab"}).status_code == 409    # v3: default writer = Actions, backend is read-only
+    jobs.set_writer_mode("selfhosted", "test")
     assert c.get("/api/status").status_code == 401 and c.get("/healthz").status_code == 200
     assert c.get("/api/status", headers=h).status_code == 200 and c.get("/readyz", headers=h).json()["ok"]
     assert c.put("/api/settings", json={"max_positions": 3}, headers=h).status_code == 403                               # CSRF header missing
@@ -302,7 +304,7 @@ def test_no_secrets_in_site_or_repo():
             for f in fs:
                 if f.endswith((".js", ".html", ".py", ".md", ".yml", ".css")) and "lightweight" not in f:
                     t = open(os.path.join(dp, f), errors="ignore").read(); assert not any(b in t for b in bad), (dp, f)
-    js = open(os.path.join(root, "site_src", "controls.js")).read(); assert "sessionStorage" in js and "localStorage" not in js
+    js = open(os.path.join(root, "site_src", "controls.js")).read(); assert "sessionStorage" not in js and "localStorage" not in js and "api.github.com" not in js          # v3: no token input anywhere on the public site
 
 # ---------------------------------------------------------------- Phase 7: backtester
 def test_backtest_no_lookahead_and_costs():

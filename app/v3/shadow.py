@@ -60,7 +60,7 @@ def build(now=None, cfg=None, start=None):
         fx_cost_myr = start_myr - usd * fx0
         divs = _dividends(sym); has_div = len(divs) > 0; sh = shares; drip = 0.0
         c.execute("INSERT INTO shadow_portfolios VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (pid, sym, str(start), start_myr, fx0, shares, 0.0, fill, costs_usd, fx_cost_myr,
-                  "fractional shares; entry = last final close on/before start + 1bp half-spread; FX mid + spread; dividends reinvested at ex-date close" if has_div else "PRICE RETURN ONLY (no dividend data available)", now.isoformat(timespec="seconds")))
+                  "fractional shares; entry = last final close on/before start + 1bp half-spread; FX mid + spread; " + ("dividends reinvested at ex-date close (total return)" if has_div else "PRICE RETURN ONLY (no dividend data available for this run)"), now.isoformat(timespec="seconds")))
         d = start; dd = {x[0]: x[1] for x in divs}
         while d <= endd:
             ds = str(d)

@@ -111,3 +111,29 @@ def test_snapshot_has_no_secrets(env2, monkeypatch):
     st = ai.status(); blob = json.dumps(st) + json.dumps(daily_report.build(NOW_FILL.date(), NOW_FILL, store=False), default=str)
     c = db.conn(); blob += json.dumps([dict(r) for r in c.execute("SELECT * FROM ai_status_log")]); c.close()
     assert "TOPSECRET" not in blob
+
+# ---------------------------------------------------------------- self-hosted backend: auth + CSRF + writer mode
+import base64
+from fastapi.testclient import TestClient
+def _h(): return {"Authorization": "Basic " + base64.b64encode(b"alice:s3cret-pass").decode(), "X-Requested-With": "ailab"}
+
+@pytest.fixture
+def api(env2, monkeypatch):
+    monkeypatch.delenv("AITL_AUTH_DISABLED", raising=False); monkeypatch.setenv("DASH_USER", "alice"); monkeypatch.setenv("DASH_PASS", "s3cret-pass")
+    from app.main import app
+    return TestClient(app)
+
+def test_backend_read_only_unless_selfhosted_writer(api):
+    assert api.get("/healthz").status_code == 200 and api.get("/api/v3").status_code == 401
+    assert api.get("/api/v3", headers=_h()).status_code == 200
+    r = api.post("/api/command", headers=_h(), json={"type": "resume_entries"}); assert r.status_code == 409 and "READ-ONLY" in r.text      # default writer mode = actions
+    jobs.set_writer_mode("selfhosted", "owner")
+    assert api.post("/api/command", headers={k: v for k, v in _h().items() if k != "X-Requested-With"}, json={"type": "resume_entries"}).status_code == 403   # CSRF
+    r = api.post("/api/command", headers=_h(), json={"type": "reactivate_strategy", "strategy": "meanrev", "confirm": "wrong"}); assert r.status_code == 400
+    assert api.post("/api/command", headers=_h(), json={"type": "start_v3_experiment", "confirm": "no"}).status_code == 400
+
+def test_selfhosted_scheduler_respects_writer_mode(env2, monkeypatch):
+    from app import jobs as sj
+    monkeypatch.setattr(sj.cal, "is_open", lambda *a, **k: True)
+    sj.monitor("US"); c = db.conn(); r = c.execute("SELECT status,skip_reason FROM job_runs WHERE job='monitor'").fetchone(); c.close()
+    assert r and r["status"] == "skipped" and "not the writer" in r["skip_reason"]                                    # mode=actions: the self-hosted scheduler must not write

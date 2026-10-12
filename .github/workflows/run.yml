@@ -18,7 +18,7 @@ on:
   push:
     branches: [main]
     paths: ["site_src/**", "export_static.py", "ci_run.py", ".github/workflows/**", "app/**", "tools/**", "tests/**", "requirements.txt", "docs/**"]
-# One run at a time: the ledger DB lives on branch `data`. DB-level idempotency keys + writer lease are the second and third lines of defence.
+# Bursa jobs were REMOVED in v2.0 (US-only). One run at a time: the ledger DB lives on branch `data`. DB-level idempotency keys + writer lease are the second and third lines of defence.
 concurrency:
   group: ailab-ledger
   cancel-in-progress: false

@@ -46,6 +46,9 @@ class Guard(BaseHTTPMiddleware):
         if len(q) >= lim: return Response("rate limit exceeded", status_code=429, headers={"Retry-After": "30"})
         q.append(now)
         if request.method not in SAFE:
+            from .v3 import jobs as _j3
+            wm = _j3.writer_mode()
+            if wm != "selfhosted": return Response(f"409 ledger writer mode is '{wm}': this backend is READ-ONLY. Hand the ledger over first (command set_writer_mode=selfhosted via Actions; see docs/DEPLOY.md). Exactly one writer is allowed.", status_code=409)
             if request.headers.get("x-requested-with") != "ailab": return Response("CSRF: missing X-Requested-With header", status_code=403)
             org = request.headers.get("origin")
             if org and org.split("://", 1)[-1] != request.headers.get("host", ""): return Response("CSRF: cross-origin request refused", status_code=403)
@@ -137,6 +140,17 @@ def put_settings(body: dict = Body(...)):
     r = control.apply_settings(body, actor="api-owner", source="api")
     if not r["ok"]: raise HTTPException(400, "; ".join(map(str, r["errors"])) if isinstance(r["errors"], list) else str(r["errors"]))
     _regen(); return get_settings()
+
+@app.post("/api/command")
+def command(body: dict = Body(...)):
+    """v3 owner commands (same validated command set as the Actions path): reactivate_strategy, decide_migration_proposal, start_v3_experiment, resume_entries, ... Typed confirmations are enforced inside the command."""
+    try: r = control._cmd(body, now())
+    except Exception as e: db.audit(f"command_rejected:{body.get('type')}", {"error": str(e)}, "api-owner", "api"); raise HTTPException(400, str(e))
+    db.audit(f"command:{body.get('type')}", {k: v for k, v in body.items() if k != "confirm"}, "api-owner", "api"); _regen(); return {"ok": True, "result": r}
+
+@app.get("/api/v3")
+def v3_api():
+    from .v3 import export as v3x; return v3x.build(db.get_settings(), now())
 
 @app.post("/api/scan")
 def scan():
