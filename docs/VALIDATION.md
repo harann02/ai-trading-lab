@@ -26,3 +26,10 @@ Survivorship bias (current index members only: stock results biased upward); no 
 * Swing earned positive returns with much smaller drawdowns, but **did not beat passive SPY/QQQ on return in any aggregate window**; with survivorship bias in its favour, there is no evidence of an edge over buy&hold. Mean reversion lost money after costs (high turnover, 1,567 trades) - not recommended as configured.
 * Sample size: swing 94 OOS trades over ~2.8 years, one market regime (strong bull) - **no winner is declared** (`winner_declared=false`).
 * B (intraday): yfinance provides ~60 days of 5m candles. Research run on 8 liquid symbols, 55 sessions: 232 trades, net -$125.88 on $2,000 (-6.3%), win rate 29.7%, costs $47. Far too short a sample to conclude anything; live stays disabled.
+
+## v3 additions (what was and was not achieved)
+* **Cost sensitivity, parameter stability, regime windows, entry cadence:** done in `run_cadence_study.py` (`docs/ENTRY_CADENCE_STUDY.md`).
+* **Total-return benchmarks:** SPY/QQQ adjusted-close returns (dividends included) are computed for the same windows; the main `backtest2` curves still use split-adjusted, dividend-less closes for the strategies' own benchmark rows (understates buy&hold slightly).
+* **Historical index membership / delisted names: NOT achieved.** `tools/index_membership_check.py` measures the exposure: 89 of 503 current S&P 500 members (17.7 %) joined after the 2021-01-04 backtest start, and the free Wikipedia page no longer exposes the removed-names log, so a point-in-time universe and delisted price histories could not be rebuilt for free. **Survivorship / look-ahead-on-membership bias remains; results are optimistic by an unknown amount.** No workaround is claimed to resolve it.
+* Fundamentals remain current-only (no point-in-time data); the swing backtest still drops the fundamental factor.
+* An optimized or repeatedly examined backtest is not independent validation. The only independent evidence will be the forward paper record (`docs/FORWARD_VERIFICATION.md`), and that verifies operation, not profitability.
