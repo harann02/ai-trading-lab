@@ -9,7 +9,7 @@ def build(session, now=None, store=True):
     now = now or datetime.now(timezone.utc); cfg = db.get_settings(); snap = portfolio.snapshot(now, cfg); k = views.kpis(cfg, now); c = db.conn()
     h = cal.session_hours("US", session); o, cl = h
     ds, de = o.isoformat(timespec="seconds"), (cl + timedelta(hours=8)).isoformat(timespec="seconds")
-    fills = [dict(r) for r in c.execute("SELECT id,symbol,side,qty,status,reason,fill_price,exec_ts,price_available_ts,fill_basis,fees_usd,slippage_usd,spread_bps,strategy_id FROM orders WHERE strategy_id IS NOT NULL AND ((exec_ts>=? AND exec_ts<?) OR (updated_ts>=? AND updated_ts<? AND status IN ('rejected','canceled')))", (ds, de, ds, de))]
+    fills = [dict(r) for r in c.execute("SELECT id,symbol,side,qty,status,reason,fill_price,fill_ts,exec_ts,price_available_ts,fill_basis,fees_usd,slippage_usd,spread_bps,strategy_id FROM orders WHERE strategy_id IS NOT NULL AND ((exec_ts>=? AND exec_ts<?) OR (updated_ts>=? AND updated_ts<? AND status IN ('rejected','canceled')))", (ds, de, ds, de))]
     pend = [dict(r) for r in c.execute("SELECT id,symbol,side,qty,ref_price,stop,target,status,reason,eligible_session FROM orders WHERE status='pending' AND strategy_id IS NOT NULL")]
     dec = [dict(r) for r in c.execute("SELECT symbol,strategy_id,decision,score,checks,plan FROM decisions WHERE scan_date=? AND strategy_id='swing' ORDER BY score DESC LIMIT 6", (str(session),))]
     top = []

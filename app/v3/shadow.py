@@ -50,8 +50,9 @@ def build(now=None, cfg=None, start=None):
     endd = now.astimezone(ledger.MYT).date(); spread = float(cfg["fx_spread_bps"]) / 1e4; start_myr = float(cfg.get("benchmark_start_myr", 10000.0)); hs = 1.0 / 1e4
     for sym, pid in IDS.items():
         df = data.load_bars(sym, include_partial=False)
+        if df is None or len(df) == 0: out[pid] = {"error": f"no final {sym} bars stored yet"}; continue
         base = df[df.index <= pd.Timestamp(start)]
-        if len(df) == 0 or len(base) == 0:
+        if len(base) == 0:
             out[pid] = {"error": f"no final {sym} bar on/before {start}"}; continue
         px0 = float(base["close"].iloc[-1]); d0 = base.index[-1].date(); fx0 = portfolio.fx_mid_on(start)
         if not fx0: out[pid] = {"error": "no FX rate at start"}; continue

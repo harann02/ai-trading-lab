@@ -68,7 +68,6 @@ def main(a):
             inwin = S.monitor_window(now)
             if ev == "schedule" and not inwin[0]:
                 jobs.finish(jid, "skipped", None, {"reason": inwin[4]}, now); jobs.record_skip("monitor", now, inwin[4], ev, run_id); db.heartbeat("last_ci_run", "monitor-skipped"); jobs.release_lease(holder); _out(changed="false", engine_status="skipped"); return
-            if inwin[1] and cal.is_open("US", now) is False and now < inwin[2]: pass
             prev = cal.last_completed_session("US", now)
             if not _scan_done_for(prev, now):                       # self-healing: the scheduled scan for the last session never ran -> catch-up scan now (orders become eligible next session, honest)
                 jid2 = jobs.begin("catchup_scan", now, ev, run_id, session=str(prev))
