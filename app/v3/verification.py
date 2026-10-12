@@ -63,8 +63,11 @@ def compute_session(d, now):
     o, cl = h; scan_slot = datetime(d.year, d.month, d.day, S.SCAN_UTC[0], S.SCAN_UTC[1], tzinfo=timezone.utc)
     scans = [dict(r) for r in c.execute("SELECT * FROM job_runs WHERE job IN ('scan','catchup_scan') AND status='success' AND started_ts>=? ORDER BY started_ts", ((cl).isoformat(timespec="seconds"),))]
     scans = [r for r in scans if (nxt is None or datetime.fromisoformat(r["started_ts"]) < nxt)]
-    real = [r for r in scans if r.get("run_id")]; item["scan_occurred"] = int(bool(real))
-    if scans and not real: notes.append("scan has no real run id (not counted as real evidence)")
+    # UNATTENDED evidence = runs started by the cron `schedule` event only. workflow_dispatch / push / manual runs are shown separately and NEVER count.
+    real = [r for r in scans if r.get("run_id") and r.get("trigger") == "schedule"]; item["scan_occurred"] = int(bool(real))
+    manual = [r for r in scans if r.get("run_id") and r.get("trigger") != "schedule"]
+    if manual: notes.append(f"{len(manual)} manual/push scan run(s) ({', '.join(sorted({str(r.get('trigger')) for r in manual}))}) shown separately: NOT counted as unattended evidence")
+    if scans and not real and not manual: notes.append("scan has no real run id (not counted as real evidence)")
     on_time = any(r["job"] == "scan" for r in real)
     fs = c.execute("SELECT * FROM forward_sessions WHERE session_date=?", (str(d),)).fetchone(); fs = dict(fs) if fs else {}
     for k in ("data_retrieved", "stocks_evaluated", "candidates", "passed_risk"): item[k] = fs.get(k)
@@ -83,7 +86,7 @@ def compute_session(d, now):
     item["positions_reconciled"] = int(ok_rec); item["pnl_correct"] = int(ok_rec)
     sf = c.execute("SELECT stale_feeds FROM forward_sessions WHERE session_date=?", (str(d),)).fetchone(); item["stale_feeds"] = (sf["stale_feeds"] if sf and sf["stale_feeds"] is not None else 0)
     # monitor coverage during the session
-    exp = S.expected_monitor_runs(o, cl); ran = [datetime.fromisoformat(r["started_ts"]) for r in c.execute("SELECT started_ts FROM job_runs WHERE job IN ('monitor','scan','catchup_scan','control') AND status IN ('success','failed') AND started_ts>=? AND started_ts<=?", ((o - timedelta(minutes=5)).isoformat(timespec="seconds"), (cl + timedelta(minutes=40)).isoformat(timespec="seconds")))]
+    exp = S.expected_monitor_runs(o, cl); ran = [datetime.fromisoformat(r["started_ts"]) for r in c.execute("SELECT started_ts FROM job_runs WHERE trigger='schedule' AND job IN ('monitor','scan','catchup_scan','control') AND status IN ('success','failed') AND started_ts>=? AND started_ts<=?", ((o - timedelta(minutes=5)).isoformat(timespec="seconds"), (cl + timedelta(minutes=40)).isoformat(timespec="seconds")))]
     hit = [e for e in exp if any(e - timedelta(minutes=2) <= r <= e + timedelta(minutes=S.TOL_MIN) for r in ran)]
     cov = (len(hit) / len(exp)) if exp else 1.0
     gap = 0; last = o
@@ -148,6 +151,9 @@ def summary(now=None):
     try:
         cs = cal.current_or_next_session("US", now); nxt_session = str(cs[0]) if cs else None
     except Exception: pass
-    return {"status": status, "required_sessions": REQUIRED, "consecutive_qualifying": streak, "total_qualifying": total_q, "failed_sessions": n_failed, "start_session": str(st) if st else None,
+    c = db.conn(); manual_runs = [dict(r) for r in c.execute("SELECT job,trigger,started_ts,status,run_id FROM job_runs WHERE trigger!='schedule' AND status!='skipped' AND run_id IS NOT NULL ORDER BY id DESC LIMIT 12")]
+    sched_runs = c.execute("SELECT COUNT(*) n FROM job_runs WHERE trigger='schedule' AND status IN ('success','failed')").fetchone()["n"]; c.close()
+    return {"counted_basis": "sessions are counted ONLY from runs whose GitHub event_name is 'schedule' (unattended cron); manual/push runs are listed separately and never count", "scheduled_runs_recorded": sched_runs, "manual_runs_not_counted": manual_runs,
+            "status": status, "required_sessions": REQUIRED, "consecutive_qualifying": streak, "total_qualifying": total_q, "failed_sessions": n_failed, "start_session": str(st) if st else None,
             "sessions": rows[-40:], "items": ITEMS, "next_session": nxt_session, "started_after_v3_migration_ts": _meta("v3_applied_ts"),
             "honesty": f"{streak} of {REQUIRED} qualifying consecutive sessions completed. Nothing is claimed beyond recorded evidence. Sessions are only counted after their deadline (next open) with a real run id."}

@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from .. import db
 
 PRIMARY = "swing"
-RESEARCH_LABEL = "RESEARCH ONLY — NEW TRADES DISABLED"
+RESEARCH_LABEL = "RESEARCH ONLY — TRADING DISABLED"     # shown verbatim for mean reversion and intraday while their new entries are disabled
+RESEARCH_SIDS = ("meanrev", "intraday")
 MEANREV_WHY = "Mean-reversion entries are suspended because historical testing did not demonstrate a positive net return after costs."
 RETIRED_WHY = "Retired in v3.0: SPY/QQQ are tracked only as separate shadow benchmark portfolios, never as real trading capital."
 # status per strategy when no flag row exists (fresh v3 DBs get rows from migration/init)
@@ -14,7 +15,7 @@ DEFAULT_FLAGS = {
     "swing": {"new_entries": True, "label": "PRIMARY — 100% of trading pool", "why": ""},
     "meanrev": {"new_entries": False, "label": RESEARCH_LABEL, "why": MEANREV_WHY},
     "baseline": {"new_entries": False, "label": "RETIRED — shadow benchmark only", "why": RETIRED_WHY},
-    "intraday": {"new_entries": False, "label": "RESEARCH ONLY — DISABLED (owner enable required)", "why": "No real-time intraday feed; no fabricated minute candles."},
+    "intraday": {"new_entries": False, "label": RESEARCH_LABEL, "why": "No real-time intraday feed; no fabricated minute candles."},
 }
 REACTIVATION_RULES = ("owner command 'reactivate_strategy' with confirm == 'REACTIVATE <strategy>'", "out-of-sample net return after costs > 0 in validation/results.json",
                       ">= 30 out-of-sample trades", "net return still > 0 under 2x cost sensitivity", "positive in a majority of walk-forward windows",
@@ -28,6 +29,13 @@ def ensure_flags(c=None):
         c.execute("INSERT OR IGNORE INTO strategy_flags(strategy_id,new_entries_enabled,label,explanation,updated_ts) VALUES(?,?,?,?,?)", (sid, int(f["new_entries"]), f["label"], f["why"], now_iso()))
     if own: c.commit(); c.close()
 
+def _norm(f):
+    """Display normalisation: research-only strategies with entries disabled ALWAYS carry the exact label RESEARCH ONLY — TRADING DISABLED (the DB row may hold an older wording). Permissions are untouched."""
+    f["forward_paper_execution"] = bool(f.get("new_entries_enabled"))
+    f["research_available"] = f.get("strategy_id") in ("swing", "meanrev", "baseline", "intraday")
+    if f.get("strategy_id") in RESEARCH_SIDS and not f["forward_paper_execution"]: f["label"] = RESEARCH_LABEL
+    return f
+
 def get_flag(sid):
     c = db.conn()
     try:
@@ -35,7 +43,7 @@ def get_flag(sid):
     except Exception:
         r = None
     c.close()
-    if r: return dict(r)
+    if r: return _norm(dict(r))
     d = DEFAULT_FLAGS.get(sid, {"new_entries": False, "label": "", "why": ""})
     return {"strategy_id": sid, "new_entries_enabled": int(d["new_entries"]), "label": d["label"], "explanation": d["why"]}
 
@@ -43,7 +51,12 @@ def new_entries_allowed(sid) -> bool:
     return bool(get_flag(sid)["new_entries_enabled"])
 
 def all_flags():
-    ensure_flags(); c = db.conn(); r = {x["strategy_id"]: dict(x) for x in c.execute("SELECT * FROM strategy_flags")}; c.close(); return r
+    ensure_flags(); c = db.conn(); r = {x["strategy_id"]: _norm(dict(x)) for x in c.execute("SELECT * FROM strategy_flags")}; c.close(); return r
+
+def forward_active(cfg=None):
+    """Strategies that may open NEW forward-paper positions right now: enabled in settings AND flag on AND allocation > 0 (swing only in v3)."""
+    cfg = cfg or db.get_settings(); fl = all_flags()
+    return [k for k, v in cfg["strategies"].items() if v.get("enabled") and (v.get("allocation_pct") or 0) > 0 and (fl.get(k) or {}).get("new_entries_enabled")]
 
 def reactivation_conditions(strategy="meanrev", results=None, path=None):
     """Evaluates the documented validation conditions from the stored backtest results. Returns {ok, checks[]}; ok is necessary but NOT sufficient (owner must also command it)."""

@@ -23,12 +23,7 @@ concurrency:
   group: ailab-ledger
   cancel-in-progress: false
 permissions:
-  contents: write
-  pages: write
-  id-token: write
-  models: read
-  actions: write
-  issues: write
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -47,6 +42,12 @@ jobs:
     if: ${{ !cancelled() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:            # least privilege: only the run job may write
+      contents: write       # push branch data / ledger-log
+      pages: write
+      id-token: write
+      models: read
+      issues: write         # failure issue
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -78,53 +79,23 @@ jobs:
       - name: Calendar gate (NYSE/NASDAQ; skips are recorded with a reason)
         id: gate
         run: python tools/gate.py "${{ steps.act.outputs.action }}" "${{ github.event_name }}" dbstore
-      - name: Run engine (apply owner controls, scan / monitor)
+      - name: Engine + export + VERIFIED compare-and-swap persist (bounded re-run on conflict; never overwrites a newer ledger)
         id: engine
         if: steps.gate.outputs.proceed != 'false'
         env:
           AITL_FAIL_AFTER_PERSIST: "1"
           AITL_INPUT_SETTINGS: ${{ github.event.inputs.settings_json }}
           AITL_INPUT_COMMAND: ${{ github.event.inputs.command_json }}
-          AITL_ALLOW_KEYLESS: ${{ vars.AITL_ALLOW_KEYLESS || '1' }}   # key-less Pollinations is probed every run; AI is only marked VERIFIED if the grounded-JSON probe passes
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          AITL_DB: ${{ github.workspace }}/dbstore/ailab.db
-          AITL_CONTROL_DIR: ${{ github.workspace }}/dbstore/control
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python ci_run.py "${{ steps.act.outputs.action }}"
-      - name: Export static snapshot
-        if: steps.engine.outputs.changed == 'true'
-        env:
-          AITL_DB: ${{ github.workspace }}/dbstore/ailab.db
-          AITL_TRIGGER: ${{ github.event_name }}:${{ steps.act.outputs.action }}
-          AITL_ALLOW_KEYLESS: ${{ vars.AITL_ALLOW_KEYLESS || '1' }}
+          AITL_ALLOW_KEYLESS: ${{ vars.AITL_ALLOW_KEYLESS || '1' }}   # key-less Pollinations is probed every run
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python export_static.py site
-      - name: Persist ledger DB + control file to branch data (single squashed commit, race-safe)
-        if: steps.engine.outputs.changed == 'true'
-        run: |
-          cd dbstore
-          python - <<'PY'
-          import sqlite3
-          c = sqlite3.connect("ailab.db"); c.execute("PRAGMA wal_checkpoint(TRUNCATE)"); c.execute("PRAGMA journal_mode=DELETE"); c.execute("VACUUM"); c.close()
-          PY
-          rm -f ailab.db-wal ailab.db-shm
-          git config user.name "ailab-bot"; git config user.email "ailab-bot@users.noreply.github.com"
-          for i in 1 2 3 4 5; do
-            git fetch -q origin data:refs/remotes/origin/data
-            HEAD_SHA=$(git rev-parse origin/data)
-            # the owner may have written control/commands.json while we ran: the remote copy wins
-            mkdir -p control; if git cat-file -e origin/data:control/commands.json 2>/dev/null; then git show origin/data:control/commands.json > control/commands.json; fi
-            git checkout -q --orphan tmp-data-$i
-            git add -A
-            git commit -qm "ledger snapshot ${GITHUB_RUN_ID} ($(date -u +%FT%TZ))"
-            if git push -q --force-with-lease=data:$HEAD_SHA origin tmp-data-$i:data; then echo "pushed"; break; fi
-            echo "data branch moved during run, retrying ($i)"; git checkout -q --detach origin/data; sleep 3
-          done
+        run: python tools/cycle.py "${{ steps.act.outputs.action }}" dbstore site
+      - name: Open an issue if the ledger could not be persisted safely
+        if: failure() && steps.engine.outputs.persist_failed == 'true'
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: gh issue create --title "Ledger persist FAILED (nothing pushed) - run ${{ github.run_id }}" --body "The engine run could not be persisted safely (conflict/integrity). The remote ledger was NOT overwritten. See run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Re-run the workflow after checking branch data." || true
       - uses: actions/configure-pages@v5
         if: steps.engine.outputs.changed == 'true'
       - uses: actions/upload-pages-artifact@v3

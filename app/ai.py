@@ -9,7 +9,7 @@ from . import db, config, ledger
 TEMPLATE_TAG = "[template, no LLM]"
 SYSTEM = ("You are a careful equity research writer for a PAPER-trading lab. Use ONLY the JSON facts provided. Never invent numbers, news, prices or ratings. "
           "Do not give investment advice and do not decide trades; the rules engine already decided. Write concise plain text. "
-          "If a fact is null/missing say it is unavailable. Every number you write must appear in the JSON.")
+          "If a fact is null/missing say it is unavailable. Every number you write must appear in the JSON; copy numbers exactly as written there (no thousands separators, no rounding, no new calculations). Use plain ASCII text.")
 
 # (env var for key, base_url, default model, wire format). Order = preference. Free-first: GROQ / GEMINI / OPENROUTER (free models) / GitHub Models / keyless Pollinations come BEFORE paid keys
 # only when no paid key is set; paid keys still win if present because the owner configured them deliberately.
@@ -23,7 +23,7 @@ PROVIDERS = [
     ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct:free", "openai"),    # FREE models (needs a free key)
     ("GITHUB_TOKEN", "https://models.github.ai/inference", "openai/gpt-4o-mini", "openai"),               # GitHub Models free tier (probed; see docs/AI_SETUP.md)
 ]
-KEYLESS = ("pollinations", "https://text.pollinations.ai/openai", "openai", "openai")   # key-less public service: enabled only with AITL_ALLOW_KEYLESS=1, still must pass the grounded probe
+KEYLESS = ("pollinations", "https://text.pollinations.ai/openai", "openai-fast", "openai")   # GET /models lists only `openai-fast` (GPT-OSS 20B) as anonymous-tier; the old alias "openai" resolved to the same model but was mislabeled   # key-less public service: enabled only with AITL_ALLOW_KEYLESS=1, still must pass the grounded probe
 
 class LLMError(Exception):
     """category in: auth_error | rate_limited | payment_required | server_error | network_error | timeout | non_json_response | invalid_json | ungrounded_output | http_error | disabled"""
@@ -53,7 +53,21 @@ def _classify(status, ctype, body):
     if "json" not in (ctype or "").lower(): return "non_json_response"
     return None
 
-def _call(p, system, user, max_tokens=700, timeout=45, json_mode=False):
+TRANSIENT = ("payment_required", "rate_limited", "server_error", "timeout", "network_error")   # Pollinations anonymous tier answers 402/429/5xx under load: retried, then reported honestly
+RETRY_SLEEP = (2, 6)
+_sleep = __import__("time").sleep
+
+def _call(p, system, user, max_tokens=1200, timeout=60, json_mode=False, retries=2):
+    last = None
+    for attempt in range(retries + 1):
+        try: return _call_once(p, system, user, max_tokens, timeout, json_mode)
+        except LLMError as e:
+            last = e
+            if e.category not in TRANSIENT or attempt == retries: raise
+            _sleep(RETRY_SLEEP[min(attempt, len(RETRY_SLEEP) - 1)])
+    raise last
+
+def _call_once(p, system, user, max_tokens=1200, timeout=60, json_mode=False):
     hdr = {"x-api-key": p["key"], "anthropic-version": "2023-06-01"} if p["fmt"] == "anthropic" else ({"Authorization": f"Bearer {p['key']}"} if p["key"] else {})
     try:
         if p["fmt"] == "anthropic":
@@ -67,21 +81,26 @@ def _call(p, system, user, max_tokens=700, timeout=45, json_mode=False):
     cat = _classify(r.status_code, r.headers.get("content-type"), r.text)
     if cat: raise LLMError(cat, f"HTTP {r.status_code} {r.headers.get('content-type','')[:30]} {r.text[:100]!r}".replace(p["key"] or "\0", "***"))
     try:
-        j = r.json(); return j["content"][0]["text"] if p["fmt"] == "anthropic" else j["choices"][0]["message"]["content"]
+        j = r.json(); p["model_actual"] = j.get("model") if isinstance(j, dict) else None
+        txt = j["content"][0]["text"] if p["fmt"] == "anthropic" else j["choices"][0]["message"]["content"]
     except Exception: raise LLMError("invalid_json", f"unexpected body {r.text[:80]!r}".replace(p["key"] or "\0", "***"))
+    if not (txt or "").strip(): raise LLMError("empty_output", "model returned empty content (token budget consumed by reasoning?)")
+    return txt
 
-PROBE_FACTS = {"ticker": "PROBE", "price_usd": 123.45, "score": 71.5}
+PROBE_FACTS = {"ticker": "PROBE", "price_usd": 123.45, "score": 71.5}     # kept for reference/back-compat; probes use a fresh random nonce each time
 def probe_grounded(p):
-    """REAL probe: the model must return valid JSON that copies the given facts exactly. Returns (ok, category, detail). Passing = the provider answers grounded JSON now."""
+    """REAL probe with a UNIQUE nonce per call (a fixed prompt can be answered from the provider's cache - audit F-3). The model must return valid JSON copying the random facts. Returns (ok, category, detail)."""
+    import random, uuid
+    facts = {"ticker": "PROBE", "price_usd": round(random.uniform(10, 900), 2), "score": round(random.uniform(1, 99), 1), "nonce": uuid.uuid4().hex[:10]}
     try:
-        txt = _call(p, "You output strict JSON only. No prose, no markdown.", f"Copy these facts into a JSON object with exactly the keys ticker, price_usd, score and the SAME values: {json.dumps(PROBE_FACTS)}", max_tokens=80, timeout=40, json_mode=True)
+        txt = _call(p, "You output strict JSON only. No prose, no markdown.", f"Copy these facts into a JSON object with exactly the keys ticker, price_usd, score, nonce and the SAME values: {json.dumps(facts)}", max_tokens=400, timeout=40, json_mode=True, retries=1)
     except LLMError as e: return False, e.category, str(e)[:200]
     m = re.search(r"\{.*\}", txt or "", re.S)
     try: j = json.loads(m.group(0) if m else txt)
     except Exception: return False, "invalid_json", f"not JSON: {(txt or '')[:80]!r}"
-    try: good = j.get("ticker") == "PROBE" and abs(float(j.get("price_usd")) - 123.45) < 1e-6 and abs(float(j.get("score")) - 71.5) < 1e-6
+    try: good = j.get("ticker") == "PROBE" and abs(float(j.get("price_usd")) - facts["price_usd"]) < 1e-6 and abs(float(j.get("score")) - facts["score"]) < 1e-6 and str(j.get("nonce")) == facts["nonce"]
     except Exception: good = False
-    return (True, None, "valid grounded JSON returned") if good else (False, "ungrounded_output", f"JSON did not match the supplied facts: {str(j)[:80]}")
+    return (True, None, "valid grounded JSON returned (unique nonce echoed)") if good else (False, "ungrounded_output", f"JSON did not match the supplied facts: {str(j)[:80]}")
 
 _ACTIVE = {}; LAST_ERRS = []; LAST_PROBES = []
 def _key(env): return json.dumps(sorted((env if env is not None else os.environ).keys() & ({v[0] for v in PROVIDERS} | {"AITL_ALLOW_KEYLESS", "AITL_LLM_DISABLED"})))
@@ -98,23 +117,59 @@ def active_provider(env=None, cfg=None, force=False):
     _ACTIVE[k] = chosen; _ACTIVE[k + ":errs"] = errs; _ACTIVE[k + ":probes"] = probes; globals()["LAST_ERRS"] = errs; globals()["LAST_PROBES"] = probes
     return chosen
 
-def status(env=None, cfg=None):
-    """v3 AI engine status. AI ACTIVE - VERIFIED only when a real probe call returned valid grounded JSON in THIS process. Never exposes keys."""
-    e = env if env is not None else os.environ; p = active_provider(env, cfg); k = _key(env); probes = _ACTIVE.get(k + ":probes", [])
-    cands = candidates(env, cfg)
-    if p: state, label = "AI ACTIVE — VERIFIED", f"AI ACTIVE — VERIFIED: {p['name']}/{p['model']} (real probe returned valid grounded JSON)"
-    elif e.get("AITL_LLM_DISABLED") == "1": state, label = "AI TEMPLATE MODE", "AI TEMPLATE MODE: LLM disabled by AITL_LLM_DISABLED; labeled deterministic templates are used"
-    elif not cands: state, label = "AI TEMPLATE MODE", "AI TEMPLATE MODE: no LLM provider configured (add a free key, see docs/AI_SETUP.md); labeled deterministic templates are used"
-    else:
-        cats = {x["category"] for x in probes}
-        if cats and cats <= {"network_error", "timeout", "rate_limited", "server_error", "payment_required", "non_json_response"}: state, label = "AI UNAVAILABLE", "AI UNAVAILABLE: configured provider(s) unreachable/rate-limited/not serving JSON; labeled templates are used"
-        else: state, label = "AI ERROR", "AI ERROR: configured provider(s) answered with auth errors or invalid/ungrounded output; labeled templates are used"
-    out = {"state": state, "mode": "LLM" if p else "template", "provider": p["name"] if p else None, "model": p["model"] if p else None, "label": label, "template_tag": TEMPLATE_TAG,
-           "probes": probes, "errors": _ACTIVE.get(k + ":errs", []), "configured": [c["name"] for c in cands], "keys_exposed": False, "probe": "grounded JSON copy-facts probe"}
+WINDOW_DAYS = 7          # "recent window" used for every AI status count
+GENUINE_KINDS = ("memo", "market_summary", "daily_report", "weekly_report")
+
+def output_summary(window_days=WINDOW_DAYS, now=None):
+    """What the model ACTUALLY produced in the recent window, straight from llm_log. Accepted = mode 'llm' AND ok=1 (the text passed the number validator and is what is stored/shown).
+    Rejected = 'llm_rejected' (validator) ; failed = 'llm_error' (HTTP/timeouts/empty) ; template = deterministic fallback text."""
+    from datetime import timedelta
+    now = now or datetime.now(timezone.utc); since = (now - timedelta(days=window_days)).isoformat(timespec="seconds"); out = {"window_days": window_days, "since_utc": since}
+    try:
+        c = db.conn(); rows = [dict(r) for r in c.execute("SELECT id,ts,kind,provider,model,mode,ok,error FROM llm_log WHERE ts>=? ORDER BY id", (since,))]; c.close()
+    except Exception: rows = []
+    acc = [r for r in rows if r["mode"] == "llm" and r["ok"]]; rej = [r for r in rows if r["mode"] == "llm_rejected"]; err = [r for r in rows if r["mode"] == "llm_error"]; tpl = [r for r in rows if r["mode"] == "template"]
+    reasons = {}
+    for r in rej + err:
+        k = (r["error"] or r["mode"]).split(":")[0] + (": " + r["error"].split(":", 1)[1].strip()[:80] if r["error"] and ":" in r["error"] else ""); reasons[k] = reasons.get(k, 0) + 1
+    out.update({"accepted_count": len(acc), "last_accepted_ts": acc[-1]["ts"] if acc else None, "last_accepted_kind": acc[-1]["kind"] if acc else None, "last_accepted_model": (acc[-1]["provider"] or "") + "/" + (acc[-1]["model"] or "") if acc else None,
+                "rejected_count": len(rej), "failed_count": len(err), "template_count": len(tpl), "rejected_reasons": [{"reason": k, "count": v} for k, v in sorted(reasons.items(), key=lambda x: -x[1])][:8],
+                "last_template_ts": tpl[-1]["ts"] if tpl else None, "last_attempt_ts": rows[-1]["ts"] if rows else None, "last_attempt_mode": rows[-1]["mode"] if rows else None, "attempts": len(rows)})
+    return out
+
+def derive_state(provider_reachable, configured, disabled, summ, probes=()):
+    """Pure function: the four SEPARATE indicators and the headline. 'AI ACTIVE — VERIFIED' only if >=1 model-written output was accepted in the window."""
+    acc = summ.get("accepted_count", 0)
+    cats = {x.get("category") for x in probes if not x.get("ok")}
+    transient = bool(cats) and cats <= {"network_error", "timeout", "rate_limited", "server_error", "payment_required", "non_json_response", "empty_output"}
+    ind = {"provider_reachable": {"ok": bool(provider_reachable), "configured": configured, "detail": "latest grounded probe passed (unique nonce)" if provider_reachable else ("not configured / disabled" if (disabled or not configured) else "latest probe failed: " + ", ".join(sorted(c for c in cats if c)))},
+           "genuine_ai_output": {"accepted_count": acc, "last_accepted_ts": summ.get("last_accepted_ts"), "window_days": summ.get("window_days"), "rejected_count": summ.get("rejected_count", 0), "failed_count": summ.get("failed_count", 0), "rejected_reasons": summ.get("rejected_reasons", [])},
+           "template_fallback": {"active": acc == 0 or summ.get("last_attempt_mode") not in (None, "llm"), "template_count": summ.get("template_count", 0), "last_template_ts": summ.get("last_template_ts")},
+           "ai_unavailable": {"active": bool(configured) and not provider_reachable and not disabled, "failed_count": summ.get("failed_count", 0)}}
+    w = summ.get("window_days", WINDOW_DAYS)
+    if acc >= 1:
+        state = "AI ACTIVE — VERIFIED"; label = f"AI ACTIVE — VERIFIED: {acc} model-written report(s) accepted in the last {w} days (last accepted {summ.get('last_accepted_ts')}); rejected {summ.get('rejected_count', 0)}, failed {summ.get('failed_count', 0)}"
+        if ind["template_fallback"]["active"]: label += "; latest output used the template fallback"
+    elif disabled: state, label = "AI TEMPLATE MODE", "AI TEMPLATE MODE: LLM disabled by AITL_LLM_DISABLED; labeled deterministic templates are used"
+    elif not configured: state, label = "AI TEMPLATE MODE", "AI TEMPLATE MODE: no LLM provider configured (add a free key, see docs/AI_SETUP.md); labeled deterministic templates are used"
+    elif provider_reachable: state, label = "TEMPLATE FALLBACK ACTIVE", f"TEMPLATE FALLBACK ACTIVE: provider reachable but 0 model-written reports accepted in the last {w} days (rejected {summ.get('rejected_count', 0)}, failed {summ.get('failed_count', 0)}); labeled templates are used"
+    elif transient or not cats: state, label = "AI UNAVAILABLE", "AI UNAVAILABLE: configured provider(s) unreachable/rate-limited/not serving JSON; TEMPLATE FALLBACK ACTIVE; labeled templates are used"
+    else: state, label = "AI ERROR", "AI ERROR: configured provider(s) answered with auth errors or invalid/ungrounded output; TEMPLATE FALLBACK ACTIVE; labeled templates are used"
+    return state, label, ind
+
+def status(env=None, cfg=None, now=None):
+    """v3 AI status = four separate indicators (provider reachable / genuine output accepted / template fallback / unavailable). Reachability = a real probe with a unique nonce THIS run;
+    'VERIFIED' needs accepted model output in the recent window (llm_log), NOT just a passing probe. Never exposes keys."""
+    e = env if env is not None else os.environ; p = active_provider(env, cfg); k = _key(env); probes = _ACTIVE.get(k + ":probes", []); cands = candidates(env, cfg)
+    summ = output_summary(now=now); disabled = e.get("AITL_LLM_DISABLED") == "1"
+    state, label, ind = derive_state(bool(p), [c["name"] for c in cands], disabled, summ, probes)
+    out = {"state": state, "mode": "LLM" if (p and summ["accepted_count"] > 0) else "template", "provider": p["name"] if p else None, "model": (p.get("model_actual") or p["model"]) if p else None, "label": label, "template_tag": TEMPLATE_TAG,
+           "indicators": ind, "output_window": summ, "probes": probes, "errors": _ACTIVE.get(k + ":errs", []), "configured": [c["name"] for c in cands], "keys_exposed": False, "probe": "grounded JSON copy-facts probe with unique nonce"}
     try:
         c = db.conn(); c.execute("CREATE TABLE IF NOT EXISTS ai_status_log(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, state TEXT, provider TEXT, model TEXT, category TEXT, detail TEXT)")
-        if not probes: c.execute("INSERT INTO ai_status_log(ts,state,provider,model,category,detail) VALUES(?,?,?,?,?,?)", (datetime.now(timezone.utc).isoformat(timespec="seconds"), state, None, None, "no_provider_configured" if state == "AI TEMPLATE MODE" else None, label))
-        for x in probes: c.execute("INSERT INTO ai_status_log(ts,state,provider,model,category,detail) VALUES(?,?,?,?,?,?)", (datetime.now(timezone.utc).isoformat(timespec="seconds"), state, x["provider"], x["model"], x["category"], x["detail"][:200]))
+        now_s = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        if not probes: c.execute("INSERT INTO ai_status_log(ts,state,provider,model,category,detail) VALUES(?,?,?,?,?,?)", (now_s, state, None, None, "no_provider_configured" if state == "AI TEMPLATE MODE" else None, label))
+        for x in probes: c.execute("INSERT INTO ai_status_log(ts,state,provider,model,category,detail) VALUES(?,?,?,?,?,?)", (now_s, state, x["provider"], x["model"], x["category"], x["detail"]))
         c.commit(); c.close()
     except Exception: pass
     return out
@@ -169,23 +224,45 @@ def template_text(fl):
          "Sources: " + json.dumps(fl["data_sources"]) + (". Headlines: " + " | ".join(f"{n['published']} {n['title']}" for n in fl["news"]) if fl["news"] else ". No headlines available.")]
     return "\n".join(L)
 
+_DASH = dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2212"), "-"); _SPACE = dict.fromkeys(map(ord, "\u202f\u00a0\u2009\u2007"), " ")
+MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december"
+_ALLOW = [re.compile(p, re.I) for p in (
+    r"s\s*&\s*p\s*-?\s*500", r"nasdaq\s*-?\s*100", r"dow\s*30", r"russell\s*(?:1000|2000)",                    # index NAMES, not data
+    r"\b(?:sma|ema|rsi|atr|adx|macd)\s*[-(]?\s*\d{1,3}\)?", r"\b\d{1,3}\s*-?\s*(?:day|days|d|week|weeks|wk|month|months|session|sessions|bar|bars)\b",   # indicator names / window lengths
+    r"\b(?:q[1-4]|fy)\s*\d{0,4}\b", r"\b52\s*-?\s*weeks?\b", r"\b(?:t\+1|t\+2)\b")]
+_NUM = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?")
+
+def _norm_text(t):
+    t = (t or "").translate(_DASH).translate(_SPACE)
+    return re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", t)          # 9,961.54 -> 9961.54
+
+def _src_numbers(source_json):
+    t = _norm_text(source_json); out = set()
+    for d in re.findall(r"\d{4}-\d{2}-\d{2}", t): out.update(float(x) for x in d.split("-"))      # date components are legitimate numbers, not negatives
+    for m in _NUM.findall(re.sub(r"\d{4}-\d{2}-\d{2}", " ", t)): out.add(abs(float(m)))
+    return out
+
 def verify_numbers(text, source_json):
-    """Every number in the LLM text must be present in the source facts (rounded forms accepted). Returns list of unverifiable numbers."""
-    src = set(re.findall(r"-?\d+(?:\.\d+)?", source_json)); srcf = []
-    for s in src:
-        try: srcf.append(float(s))
-        except Exception: pass
-    bad = []
-    for m in re.findall(r"-?\d+(?:\.\d+)?", text):
-        v = float(m)
-        if abs(v) <= 10 and float(int(v)) == v: continue          # small integers (counts, ordinals)
-        if 1900 <= v <= 2100: continue
-        if not any(abs(v - s) <= max(0.011, abs(s) * 0.006) for s in srcf): bad.append(m)
+    """Every DATA number in the LLM text must be present in the source facts. False positives fixed (audit F-3): thousands separators (9,961.54), unicode hyphens/minus/spaces,
+    ISO dates and 'October 12, 2026' style dates, index names (S&P 500, Nasdaq-100), indicator names/windows (SMA200, 20-day), sign-insensitive (down 0.6% vs -0.6).
+    Numbers NOT in the source are still rejected. Returns the list of unverifiable numbers."""
+    src = _src_numbers(source_json); t = _norm_text(text); bad = []
+    for d in re.findall(r"\b\d{4}-\d{2}-\d{2}\b", t):                                   # ISO dates must be dates we gave it (or be date components of them)
+        if d not in _norm_text(source_json) and not all(float(x) in src for x in d.split("-")): bad.append(d)
+    t = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", " ", t)
+    t = re.sub(rf"\b(?:{MONTHS})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s*\d{{4}})?", " ", t, flags=re.I)  # 'October 12, 2026'
+    t = re.sub(rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s+(?:{MONTHS})\.?(?:,?\s*\d{{4}})?", " ", t, flags=re.I)  # '12 October 2026'
+    for a in _ALLOW: t = a.sub(" ", t)
+    for m in _NUM.findall(t):
+        v = abs(float(m))
+        if v <= 10 and float(int(v)) == v: continue          # small integers (counts, ordinals)
+        if 1900 <= v <= 2100: continue                       # years
+        if not any(abs(v - s) <= max(0.011, abs(s) * 0.006) for s in src): bad.append(m)
     return bad
 
 def log_llm(kind, symbol, prov, mode, prompt, source, response, ok, error=None):
     c = db.conn(); cur = c.execute("INSERT INTO llm_log(ts,kind,symbol,provider,model,mode,prompt,source_data,response,ok,error) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-        (datetime.now(timezone.utc).isoformat(timespec="seconds"), kind, symbol, prov and prov["name"], prov and prov["model"], mode, prompt, source, response, int(ok), error)); c.commit(); i = cur.lastrowid; c.close(); return i
+        (datetime.now(timezone.utc).isoformat(timespec="seconds"), kind, symbol, prov and prov["name"], prov and (prov.get("model_actual") or prov["model"]), mode, prompt, source, response, int(ok), error)); c.commit(); i = cur.lastrowid; c.close(); return i
 
 def explain(kind, symbol, facts: dict, instruction: str, env=None, cfg=None, template_fn=None):
     """Returns (text, mode, llm_log_id). LLM used only if available AND its numbers verify; otherwise labelled template."""

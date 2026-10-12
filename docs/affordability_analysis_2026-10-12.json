@@ -1,0 +1,126 @@
+{
+ "equity_usd": 2441.85,
+ "single_stock_cap_usd": 488.37,
+ "risk_budget_usd": 24.42,
+ "evaluated": 436,
+ "whole_share_codes": {
+  "AFFORDABLE": 318,
+  "UNAFFORDABLE_RISK_PER_SHARE": 95,
+  "UNAFFORDABLE_PRICE_GT_CAP": 23
+ },
+ "fractional_whatif_codes": {
+  "AFFORDABLE": 436
+ },
+ "affordable_whole": 318,
+ "affordable_fractional_whatif": 436,
+ "shortlist_watch_or_buy": 30,
+ "shortlist_impact": {
+  "blocked_by_size_and_rr": 7,
+  "blocked_only_by_whole_share_size": 2
+ },
+ "shortlist_blockers": {
+  "reward_to_risk>=min": 25,
+  "entry_trigger": 21,
+  "position_size>=1_share": 20,
+  "minervini_trend_template": 1
+ },
+ "blocked_only_by_size": [
+  "HUM",
+  "DDOG"
+ ],
+ "sample_unaffordable": [
+  {
+   "symbol": "AAPL",
+   "price": 336.64,
+   "atr": 6.75,
+   "stop": 309.65,
+   "code": "UNAFFORDABLE_RISK_PER_SHARE",
+   "qty": 0,
+   "frac_qty": 0.8916,
+   "rr": 0.3223655017937651,
+   "score_light": null
+  },
+  {
+   "symbol": "ACN",
+   "price": 209.06,
+   "atr": 9.1,
+   "stop": 172.65,
+   "code": "UNAFFORDABLE_RISK_PER_SHARE",
+   "qty": 0,
+   "frac_qty": 0.6664,
+   "rr": 2.253249992058787,
+   "score_light": null
+  },
+  {
+   "symbol": "ADBE",
+   "price": 242.27,
+   "atr": 8.58,
+   "stop": 207.96,
+   "code": "UNAFFORDABLE_RISK_PER_SHARE",
+   "qty": 0,
+   "frac_qty": 0.706,
+   "rr": 3.539276025006478,
+   "score_light": null
+  },
+  {
+   "symbol": "ADI",
+   "price": 406.19,
+   "atr": 11.18,
+   "stop": 361.46,
+   "code": "UNAFFORDABLE_RISK_PER_SHARE",
+   "qty": 0,
+   "frac_qty": 0.5402,
+   "rr": 0.8880874657726177,
+   "score_light": null
+  },
+  {
+   "symbol": "ADSK",
+   "price": 235.35,
+   "atr": 8.02,
+   "stop": 203.28,
+   "code": "UNAFFORDABLE_RISK_PER_SHARE",
+   "qty": 0,
+   "frac_qty": 0.7541,
+   "rr": 2.6398977801961148,
+   "score_light": null
+  },
+  {
+   "symbol": "AJG",
+   "price": 232.7,
+   "atr": 6.43,
+   "stop": 206.99,
+   "code": "UNAFFORDABLE_RISK_PER_SHARE",
+   "qty": 0,
+   "frac_qty": 0.9382,
+   "rr": 3.0199199811450943,
+   "score_light": null
+  },
+  {
+   "symbol": "ALAB",
+   "price": 342.21,
+   "atr": 24.6,
+   "stop": 243.8,
+   "code": "UNAFFORDABLE_RISK_PER_SHARE",
+   "qty": 0,
+   "frac_qty": 0.2472,
+   "rr": 1.5981241329449023,
+   "score_light": null
+  },
+  {
+   "symbol": "ALNY",
+   "price": 232.68,
+   "atr": 10.01,
+   "stop": 192.64,
+   "code": "UNAFFORDABLE_RISK_PER_SHARE",
+   "qty": 0,
+   "frac_qty": 0.6053,
+   "rr": 6.565848292974495,
+   "score_light": null
+  }
+ ],
+ "price_quantiles": {
+  "p10": 34.48,
+  "p50": 119.24,
+  "p90": 374.02
+ }
+}

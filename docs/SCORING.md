@@ -1,4 +1,4 @@
-# AI Trading Lab - Scoring, regime and rule definitions (algo `ailab-1.0.0`)
+# AI Trading Lab - Scoring, regime and rule definitions (algo `ailab-1.1.0`)
 
 All factor scores are on **0-100**, computed from real data only. A factor that cannot be computed is **excluded and
 the remaining weights are renormalized, with a flag** (it is never silently zero-filled or invented).

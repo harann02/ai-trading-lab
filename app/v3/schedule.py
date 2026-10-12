@@ -65,7 +65,13 @@ def data_freshness(now, cfg=None):
     spy = data.load_bars("SPY", include_partial=False)
     last = spy.index[-1].date() if len(spy) else None; exp = cal.last_completed_session("US", now)
     lag = (len(cal.schedule("US", last, exp)) - 1) if last and last < exp else 0
-    return {"spy_last_final_bar": str(last) if last else None, "expected_last_completed_session": str(exp), "sessions_behind": lag, "stale": bool(lag > 0 or last is None)}
+    # exchange timestamp = the bar's session date; retrieval timestamp = when our provider call fetched that bar (bars.fetched_at). Neither is the dashboard refresh time.
+    retrieved = None
+    try:
+        c = db.conn(); r = c.execute("SELECT fetched_at FROM bars WHERE symbol='SPY' AND final=1 ORDER BY date DESC LIMIT 1").fetchone(); c.close(); retrieved = r["fetched_at"] if r else None
+    except Exception: pass
+    return {"spy_last_final_bar": str(last) if last else None, "exchange_session_date": str(last) if last else None, "retrieved_utc": retrieved, "provider": "yfinance (free, end-of-day final bars)",
+            "expected_last_completed_session": str(exp), "sessions_behind": lag, "stale": bool(lag > 0 or last is None)}
 
 def health(now=None, cfg=None):
     """Dashboard scheduler-health model. Distinguishes DEPLOYMENT status (the Pages snapshot) from ENGINE execution status (job_runs)."""

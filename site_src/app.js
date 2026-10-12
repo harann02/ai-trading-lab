@@ -97,10 +97,15 @@ function drawEquity() {
 }
 
 /* ---------------- discovery ---------------- */
+function affNote() {
+  const a = (((S.d.v3 || {}).affordability) || [])[0]; if (!a) return '<div class="note" id="affnote">Affordable universe: not computed yet (appears after the next scan). "No affordable valid trade" is a legitimate decision: cash is an acceptable outcome.</div>';
+  const codes = Object.entries(a.by_code || {}).filter(([k]) => k !== 'AFFORDABLE').map(([k, n]) => esc(k) + ' ×' + n).join(' · ');
+  return `<div class="note" id="affnote"><b>Affordable universe (scan ${esc(a.scan_date)}): ${a.affordable} of ${a.evaluated}</b> candidates can be bought at whole-share size within the account's limits (equity US$${fmt(a.equity_usd, 0)}, single-stock cap US$${fmt(a.cap_usd, 0)}, 1% risk budget US$${fmt(a.risk_budget_usd, 0)}). Not affordable: ${codes || 'none'}. What-if fractional shares (OFF, not enabled): ${a.fractional_affordable ?? '–'}. "No affordable valid trade" is a legitimate decision: cash is an acceptable outcome.</div>`;
+}
 function viewDiscovery(root) {
   const d = S.d.discovery || { rows: [] }, u = S.d.universe || {};
   root.innerHTML = `<section class="wide"><h2>Auto-discovered US universe <span class="tag">${u.passed}/${u.candidates} passed filters</span> <span class="tag">scan ${esc(d.scan_date)}</span></h2>
-  <div class="note">${esc(u.method || '')}</div>
+  <div class="note">${esc(u.method || '')}</div>${affNote()}
   <div class="row"><input id="q" class="filter" placeholder="search ticker / name"><select id="fs"><option value="">any swing status</option><option>BUY ELIGIBLE</option><option>WATCH</option><option>HOLD</option><option>EXIT</option><option>REJECT</option></select>
   <select id="fm"><option value="">any mean-rev status</option><option>BUY ELIGIBLE</option><option>WATCH</option><option>HOLD</option><option>EXIT</option><option>REJECT</option></select>
   <label class="dim">min swing score <input id="ms" type="number" value="0" style="width:60px"></label><span class="dim" id="cnt"></span></div><div id="dt"></div>
@@ -207,7 +212,13 @@ function viewValidation(root) {
       N('Trades', 'n_trades', 0), N('Win %', 'win_rate', 0), N('Avg hold d', 'avg_hold_days', 1), N('Costs $', 'costs_usd', 0)];
     h += `<section class="wide"><h2>Headline (honest)</h2>${(b.headline || []).map(x => `<div class="note">• ${esc(x)}</div>`).join('')}<div class="note"><b>Verdict rule:</b> ${esc((b.verdict_oos.reasons || []).join(' | '))} · winner_declared = <b>${b.verdict_oos.winner_declared}</b></div>
       <div class="note">Generated ${esc(b.generated)} · ${esc(b.kind)} · universe ${b.setup.universe_size} symbols · start RM${b.setup.start_capital_myr} · FX spread ${b.setup.fx_spread_bps} bps · params tuned: <b>${b.setup.params_tuned}</b></div></section>`;
-    for (const n of names) h += `<section class="wide"><h2>${esc(n)} <span class="dim">${esc((b.periods[n]['swing'] || {}).start || '')} → ${esc((b.periods[n]['swing'] || {}).end || '')}</span></h2>${table(cols, Object.entries(b.periods[n]).map(([k, m]) => ({ k, m })), { id: 'bt' + n })}</section>`;
+    for (const n of names) h += `<section class="wide"><h2>${esc(n)} <span class="dim">${esc((Object.values(b.periods[n]).find(m => m && m.start) || {}).start || '')} → ${esc((Object.values(b.periods[n]).find(m => m && m.start) || {}).end || '')}</span></h2>${table(cols, Object.entries(b.periods[n]).map(([k, m]) => ({ k, m })), { id: 'bt' + n })}</section>`;
+    if (b.methodology_id) {
+      const ts = (b.periods._trade_stats || {}), sens = b.small_account_sensitivity || {}, KEY = 'swing [parity-minus-fundamentals]';
+      h += `<section class="wide" id="vmethod"><h2>Methodology <span class="tag">${esc(b.methodology_id)}</span></h2><div class="note">${esc(b.weight_rule || '')}. Pre-declared splits, parameters not tuned. Rows labelled <b>LEGACY</b> are the old v2 backtest (e.g. the +56.5% full-period / +40.9% out-of-sample swing figures): <b>LEGACY — not validated for the current live strategy</b>.</div>
+        <h3>Trade statistics recomputed from the full trade list (${esc(KEY)})</h3>${['FULL', 'IN-SAMPLE', 'OUT-OF-SAMPLE'].map(p => { const t = (ts[p] || {})[KEY] || {}; return `<div class="note">${esc(p)}: ${t.n ?? 0} trades · win ${fmt(t.win_rate_pct, 1)}% · profit factor ${fmt(t.profit_factor, 2)} · expectancy $${fmt(t.expectancy_usd, 2)}/trade · avg win $${fmt(t.avg_win_usd, 1)} / avg loss $${fmt(t.avg_loss_usd, 1)} · avg hold ${fmt(t.avg_hold_days, 0)} d</div>`; }).join('')}
+        <h3>Small-account sensitivity (swing vs SPY/QQQ, USD price return)</h3><div class="tablewrap"><table><thead><tr><th class="l">Scenario</th><th>FULL swing</th><th>FULL SPY</th><th>FULL QQQ</th><th>OOS swing</th><th>OOS SPY</th><th>OOS QQQ</th><th>OOS max DD</th></tr></thead><tbody>${Object.entries(sens).map(([n, v]) => `<tr><td class="l">${esc(n)}</td><td>${fmt(v.FULL.swing.ret_usd_pct, 1)}%</td><td>${fmt(v.FULL.SPY.ret_usd_pct, 1)}%</td><td>${fmt(v.FULL.QQQ.ret_usd_pct, 1)}%</td><td>${fmt(v['OUT-OF-SAMPLE'].swing.ret_usd_pct, 1)}%</td><td>${fmt(v['OUT-OF-SAMPLE'].SPY.ret_usd_pct, 1)}%</td><td>${fmt(v['OUT-OF-SAMPLE'].QQQ.ret_usd_pct, 1)}%</td><td>${fmt(v['OUT-OF-SAMPLE'].swing.max_dd_pct, 1)}%</td></tr>`).join('')}</tbody></table></div></section>`;
+    }
     h += `<section class="wide"><h2>Caveats (disclosed)</h2>${b.caveats.map(c => `<div class="note">• ${esc(c)}</div>`).join('')}</section>`;
     const i = b.intraday || {}; const r = (i.result || [])[0] || i.result || {};
     h += `<section class="wide"><h2>B · Intraday research <span class="tag warn">DISABLED for live · research only</span></h2><div class="note">${esc(i.label || i.status || '')}</div><div class="note">${esc(i.note || '')}</div>

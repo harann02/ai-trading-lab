@@ -85,7 +85,7 @@ def main(a):
         elif a == "export": changed = True
         try: V.update_all(now)
         except Exception as e: db.event("WARN", "verification", f"verification update failed: {e}")
-        db.heartbeat("last_ci_run", a); jobs.finish(jid, "success", None, detail, now)
+        db.heartbeat("last_ci_run", f"{a}|event={ev}|run={run_id}|counts_as_unattended={ev == 'schedule'}"); jobs.finish(jid, "success", None, detail, now)
     except Exception as e:
         err = e; status = "failed"; changed = True
         db.event("ERROR", "actions", f"{a} failed: {e}\n{traceback.format_exc()[-600:]}"); jobs.finish(jid, "failed", e, None, now)
