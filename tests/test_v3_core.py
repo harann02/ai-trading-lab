@@ -166,3 +166,21 @@ def test_shadow_benchmarks_do_not_touch_trading_cash(env2, monkeypatch):
     info = shadow.build(NOW_SCAN); after = (len(ledger.rows()), ledger.cash(), json.dumps(portfolio.snapshot(NOW_SCAN)["sleeves"], default=str)); assert before == after
     c = db.conn(); sp = c.execute("SELECT * FROM shadow_portfolios").fetchall(); c.close()
     for r in sp: assert r["start_myr"] == 10000.0 and r["shares"] > 0 and "fractional" in r["method"]
+
+# ---------------------------------------------------------------- P6: only cron `schedule` runs count as unattended evidence
+def test_manual_scan_not_counted_but_schedule_scan_is(env2, monkeypatch):
+    from app.v3 import verification as V2, jobs as J
+    from datetime import date
+    sd = V2.start_session() or date(2026, 10, 12)
+    d = sd; h, nxt = V2._session_window(d); at = h[1] + timedelta(hours=1, minutes=30)
+    c = db.conn(); c.execute("INSERT INTO job_runs(idem_key,job,trigger,scheduled_for,started_ts,finished_ts,status,run_id) VALUES('manual:scan:1','scan','workflow_dispatch',?,?,?,'success','111')", (at.isoformat(timespec="seconds"),) * 3); c.commit(); c.close()
+    item, fails, notes = V2.compute_session(d, at + timedelta(hours=1)); assert item["scan_occurred"] == 0 and any("manual/push" in n for n in notes) and any("no real scan" in f for f in fails)
+    c = db.conn(); c.execute("INSERT INTO job_runs(idem_key,job,trigger,scheduled_for,started_ts,finished_ts,status,run_id) VALUES('scan:s','scan','schedule',?,?,?,'success','222')", (at.isoformat(timespec="seconds"),) * 3); c.commit(); c.close()
+    item, fails, notes = V2.compute_session(d, at + timedelta(hours=1)); assert item["scan_occurred"] == 1
+    s = V2.summary(at + timedelta(hours=1)); assert s["scheduled_runs_recorded"] == 1 and s["manual_runs_not_counted"][0]["trigger"] == "workflow_dispatch" and "ONLY" in s["counted_basis"]
+
+def test_ci_run_records_event_name_in_heartbeat_and_job_runs(env2, monkeypatch):
+    import ci_run
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch"); monkeypatch.setenv("GITHUB_RUN_ID", "4242"); monkeypatch.delenv("AITL_CONTROL_DIR", raising=False)
+    ci_run.main("export"); c = db.conn(); hb = c.execute("SELECT info FROM heartbeat WHERE name='last_ci_run'").fetchone()["info"]; tr = c.execute("SELECT trigger FROM job_runs WHERE run_id='4242'").fetchone()["trigger"]; c.close()
+    assert "event=workflow_dispatch" in hb and "counts_as_unattended=False" in hb and tr == "workflow_dispatch"
