@@ -1,8 +1,8 @@
 name: watchdog
 on:
   schedule:
-    - cron: "50 21 * * 1-5"     # after the scan slot (21:30 UTC) + tolerance
-    - cron: "5 */3 * * 1-5"     # every 3h on weekdays: monitor gaps / failed runs
+    - cron: "56 21 * * 1-5"     # off-grid, after the scan slot (21:41 UTC) + 15 min
+    - cron: "11 */3 * * 1-5"    # off-grid, every 3h on weekdays: monitor gaps / failed runs
   workflow_dispatch: {}
 permissions:
   contents: read

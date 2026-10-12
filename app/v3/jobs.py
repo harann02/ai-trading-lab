@@ -10,6 +10,11 @@ def _iso(t=None): return (t or datetime.now(timezone.utc)).astimezone(timezone.u
 def slot(now, minutes=15):
     t = now.astimezone(timezone.utc); return t.replace(minute=(t.minute // minutes) * minutes, second=0, microsecond=0)
 
+def trigger_class(event_name):
+    """Honest trigger class stored in job_runs.trigger. GitHub cron -> 'schedule'; repository_dispatch (external backup cron) -> 'external_scheduler'
+    (a SEPARATE class: never counted as event=schedule evidence); everything else keeps its GitHub event name."""
+    return "external_scheduler" if event_name == "repository_dispatch" else (event_name or "manual")
+
 def idem_key(job, now, trigger, run_id=None, session=None):
     if trigger in ("workflow_dispatch", "manual", "push"): return f"manual:{job}:{run_id or _iso(now)}"
     if job == "scan" or job == "weekly" or job == "catchup_scan": return f"{job}:{session or now.astimezone(timezone.utc).date()}"

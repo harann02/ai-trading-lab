@@ -8,8 +8,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.v3 import schedule as S
 from app import calendars as cal
 
+UNATTENDED_EVENTS = ("schedule", "repository_dispatch")      # repository_dispatch (type external-cron) = external backup scheduler; gated exactly like cron
+
 def decide(action, event, now):
-    if event != "schedule": return True, "manual/push event: always runs (engine is idempotent)"
+    if event not in UNATTENDED_EVENTS: return True, "manual/push event: always runs (engine is idempotent)"
+    if action == "auto":                                        # intent-based: scan if the last session's EOD scan is due and missing, else monitor
+        def _done(sess):
+            try: return S.eod_scan_done(sess)
+            except Exception as e: print("gate: could not read job_runs (", e, "); the engine re-checks idempotently"); return False
+        a, sess, why = S.classify(now, _done)
+        if a == "scan": return True, why
+        ok, d, o, c, why2 = S.monitor_window(now)
+        return ok, (f"monitor: in session window ({why})" if ok else f"monitor: {why2}; {why}")
     if action == "monitor":
         ok, d, o, c, why = S.monitor_window(now)
         return ok, ("in session window" if ok else why)

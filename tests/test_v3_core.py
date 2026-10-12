@@ -114,7 +114,7 @@ def test_monitor_window_covers_full_session_and_skips_offmarket():
 
 def test_cron_expression_covers_winter_close():
     yml = open(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".github/workflows/run.yml")).read()
-    assert '"*/15 13-21 * * 1-5"' in yml and "tools/gate.py" in yml and "concurrency:" in yml and "group: ailab-ledger" in yml
+    assert '"4,19,34,49 13-21 * * 1-5"' in yml and "tools/gate.py" in yml and "concurrency:" in yml and "group: ailab-ledger" in yml
 
 def test_missed_run_detection(env2):
     now = datetime(2026, 10, 13, 16, 0, tzinfo=timezone.utc)                                                           # Tue 12:00 ET, session open since 13:30

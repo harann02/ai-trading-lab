@@ -1,9 +1,14 @@
 name: scan-monitor-deploy
 on:
   schedule:
-    - cron: "30 21 * * 1-5"       # US scan: 21:30 UTC = 05:30 MYT Tue-Sat (after the NYSE close in both EDT (20:00 UTC) and EST (21:00 UTC))
-    - cron: "*/15 13-21 * * 1-5"  # monitor: 13:00-21:59 UTC covers the FULL regular session in EDT (13:30-20:00) and EST (14:30-21:00) incl. post-close; tools/gate.py guards it with the NYSE calendar (holidays, early closes)
-    - cron: "0 2 * * 6"           # weekly strategy + evaluation report Sat 10:00 MYT
+    # OFF-GRID minutes: no two schedules share a minute (when they did, GitHub delivered ONE run and the 21:30 scan was lost) and none is on :00/:15/:30/:45.
+    # Scan vs monitor is decided by INTENT in ci_run.py (action=auto -> app/v3/schedule.classify), NOT by which cron string fired: any unattended run after the
+    # close (from max(close+30m, 21:30 UTC)) until the next open that finds no EOD scan recorded for that session performs it, idempotently (one scan per session).
+    - cron: "41 21 * * 1-5"             # US EOD scan slot: 21:41 UTC = 05:41 MYT Tue-Sat (after the NYSE close in both EDT (20:00 UTC) and EST (21:00 UTC))
+    - cron: "4,19,34,49 13-21 * * 1-5"  # monitor: 13:04-21:49 UTC covers the FULL regular session in EDT (13:30-20:00) and EST (14:30-21:00) incl. post-close; tools/gate.py guards it with the NYSE calendar; 21:34/21:49 also back up the scan
+    - cron: "13 2 * * 6"                # weekly strategy + evaluation report Sat 10:13 MYT
+  repository_dispatch:
+    types: [external-cron]              # FREE external backup trigger (docs/EXTERNAL_CRON.md). Recorded as trigger class 'external_scheduler'; NEVER counted as event=schedule
   workflow_dispatch:
     inputs:
       action:
@@ -70,14 +75,15 @@ jobs:
           if [ "$EVT" = "workflow_dispatch" ]; then a="${INPUT:-scan}"
           elif [ "$EVT" = "schedule" ]; then
             case "$SCHED" in
-              "30 21 * * 1-5") a=scan;;
-              "0 2 * * 6") a=weekly;;
-              *) a=monitor;;
+              "13 2 * * 6") a=weekly;;
+              *) a=auto;;            # scan or monitor, decided by intent (ci_run.py / app/v3/schedule.classify)
             esac
+          elif [ "$EVT" = "repository_dispatch" ]; then a=auto   # external backup cron: same intent-based path; client_payload is ignored (cannot pick an action)
           fi
           echo "action=$a" >> "$GITHUB_OUTPUT"; echo "action=$a"
       - name: Calendar gate (NYSE/NASDAQ; skips are recorded with a reason)
         id: gate
+        env: { AITL_DB: "${{ github.workspace }}/dbstore/ailab.db" }
         run: python tools/gate.py "${{ steps.act.outputs.action }}" "${{ github.event_name }}" dbstore
       - name: Engine + export + VERIFIED compare-and-swap persist (bounded re-run on conflict; never overwrites a newer ledger)
         id: engine

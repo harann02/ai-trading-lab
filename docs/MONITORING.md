@@ -10,11 +10,13 @@
 ## Cron coverage (DST safe)
 | Cron (UTC) | Job | Coverage |
 |---|---|---|
-| `*/15 13-21 * * 1-5` | monitor | 13:00-21:59: covers EDT session 13:30-20:00 and EST 14:30-21:00 incl. post-close; `tools/gate.py` skips (and records) off-hours/holidays/early closes |
-| `30 21 * * 1-5` | scan | after the close in both EDT (20:00) and EST (21:00); lands 05:30 MYT next day (Tue-Sat) |
-| `0 2 * * 6` | weekly report | Sat 10:00 MYT |
-| watchdog `50 21 * * 1-5`, `5 */3 * * 1-5` | watchdog | opens an issue on missed runs / failures |
-Note the 21:30 UTC slot fires scan and monitor crons together; the self-healing catch-up scan covers a displaced scan.
+| `4,19,34,49 13-21 * * 1-5` | auto (monitor) | 13:04-21:49: covers EDT session 13:30-20:00 and EST 14:30-21:00 incl. post-close; `tools/gate.py` skips (and records) off-hours/holidays/early closes. 21:34/21:49 also take the EOD scan if it is still missing |
+| `41 21 * * 1-5` | auto (EOD scan slot) | after the close in both EDT (20:00) and EST (21:00); 05:41 MYT next day (Tue-Sat) |
+| `13 2 * * 6` | weekly report | Sat 10:13 MYT |
+| watchdog `56 21 * * 1-5`, `11 */3 * * 1-5` | watchdog | opens an issue on missed runs / failures |
+| `repository_dispatch` `external-cron` | auto (optional external backup) | see `docs/EXTERNAL_CRON.md`; recorded as `external_scheduler` |
+All minutes are off-grid (never :00/:15/:30/:45) and no two schedules share a minute: on 2026-10-12 the old `30 21` scan collided with `*/15` and GitHub delivered a single run (classified monitor), so the scan was lost (issue #3).
+Scan vs monitor is decided by **intent** (`app/v3/schedule.classify`), not by which cron string fired: any unattended run inside the EOD-scan window (from max(close + 30 min, 21:30 UTC) until the next open) that finds no successful scan for that session performs it; idempotency key `scan:<session>` (shared by all unattended triggers) guarantees one scan per session.
 
 ## Routine (what to check and when)
 1. `GITHUB_TOKEN=<read token> python tools/check_schedule.py` (read-only): workflow `state` must be `active`; `schedule runs total` must grow.

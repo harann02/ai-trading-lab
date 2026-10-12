@@ -1,13 +1,20 @@
 """Scheduler reliability: expected-run calculator, missed-run detection, stale-data detection and the dashboard scheduler-health model.
 Calendar = pandas_market_calendars NYSE (America/New_York: DST, holidays, early closes); shown in MYT. The monitor cron is WIDE in UTC (every 15 min 13:00-21:59 UTC Mon-Fri,
-covers the summer 13:30-20:00 and winter 14:30-21:00 sessions incl. the 21:00 UTC winter close) and every run is guarded by this calendar."""
+covers the summer 13:30-20:00 and winter 14:30-21:00 sessions incl. the 21:00 UTC winter close) and every run is guarded by this calendar.
+Crons are OFF-GRID (monitor :04/:19/:34/:49, scan :41, weekly 02:13) so no two schedules share a minute (GitHub delivered only ONE run when the 21:30 scan and the
+*/15 monitor collided) and they avoid the :00/:15/:30/:45 load peaks where GitHub delays/drops scheduled runs. Slot classification is by INTENT (classify()), not by
+which cron string fired: a delayed or dropped scan slot is taken by the next unattended run inside the session's EOD-scan window."""
 import json
 from datetime import datetime, timezone, timedelta, date
 from .. import db, calendars as cal
 
 MONITOR_STEP_MIN = 15
+MONITOR_OFFSET_MIN = 4       # cron '4,19,34,49 13-21 * * 1-5'
 POST_CLOSE_MIN = 25          # candles of the last bar become visible ~20 min after the close (5m bar + 15 min delay)
-SCAN_UTC = (21, 30)          # cron '30 21 * * 1-5'
+SCAN_UTC = (21, 41)          # cron '41 21 * * 1-5' (off-grid; no monitor minute coincides)
+SCAN_EARLIEST_AFTER_CLOSE_MIN = 30   # EOD-scan window opens at max(close + 30 min, 21:30 UTC of the session day) ...
+SCAN_EARLIEST_UTC = (21, 30)         # ... and stays open until the next session's open
+WEEKLY_CRON = "13 2 * * 6"
 TOL_MIN = 25
 
 def monitor_window(now):
@@ -24,8 +31,9 @@ def expected_monitor_runs(start_utc, end_utc):
     while d <= end_utc.astimezone(cal.NY).date() + timedelta(days=1):
         h = cal.session_hours("US", d)
         if h:
-            o, c = h; t = o.replace(minute=(o.minute // MONITOR_STEP_MIN) * MONITOR_STEP_MIN, second=0, microsecond=0)
-            if t < o: t += timedelta(minutes=MONITOR_STEP_MIN)
+            o, c = h; t = o.replace(minute=(o.minute // MONITOR_STEP_MIN) * MONITOR_STEP_MIN + MONITOR_OFFSET_MIN, second=0, microsecond=0)
+            while t - timedelta(minutes=MONITOR_STEP_MIN) >= o: t -= timedelta(minutes=MONITOR_STEP_MIN)
+            while t < o: t += timedelta(minutes=MONITOR_STEP_MIN)
             while t <= c + timedelta(minutes=POST_CLOSE_MIN):
                 if start_utc <= t <= end_utc: out.append(t)
                 t += timedelta(minutes=MONITOR_STEP_MIN)
@@ -42,6 +50,37 @@ def expected_scans(start_utc, end_utc):
         d += timedelta(days=1)
     return out
 
+def eod_scan_window(session):
+    """[start, end) UTC during which an unattended run performs the EOD scan for `session`: after the close (+ final bars), before the next open."""
+    h = cal.session_hours("US", session)
+    if not h: return None
+    floor = datetime(session.year, session.month, session.day, SCAN_EARLIEST_UTC[0], SCAN_EARLIEST_UTC[1], tzinfo=timezone.utc)
+    start = max(h[1] + timedelta(minutes=SCAN_EARLIEST_AFTER_CLOSE_MIN), floor)
+    nx = cal.schedule("US", session + timedelta(days=1), session + timedelta(days=10))
+    end = nx.iloc[0]["market_open"].to_pydatetime() if len(nx) else h[1] + timedelta(days=3)
+    return start, end
+
+def eod_scan_done(session):
+    """True if a successful scan / catch-up scan is recorded for `session` (ANY trigger). Used for idempotency only, never as verification evidence."""
+    w = eod_scan_window(session)
+    if not w: return False
+    h = cal.session_hours("US", session); c = db.conn()
+    try:
+        return bool(c.execute("SELECT 1 FROM job_runs WHERE job IN ('scan','catchup_scan') AND status='success' AND started_ts>=? AND started_ts<? LIMIT 1",
+                              (h[1].isoformat(timespec="seconds"), w[1].isoformat(timespec="seconds"))).fetchone())
+    finally: c.close()
+
+def classify(now, scan_done=None):
+    """Intent-based classification of an UNATTENDED run (cron `schedule` or external scheduler), independent of which cron string fired.
+    -> (action, session|None, reason). 'scan' iff now is inside the EOD-scan window of the last completed session and no scan is recorded for it yet
+    (idempotent: once one succeeded, every later run in the window is a monitor); otherwise 'monitor' (calendar-gated as before)."""
+    scan_done = scan_done or eod_scan_done
+    sess = cal.last_completed_session("US", now); w = eod_scan_window(sess) if sess else None
+    if w and w[0] <= now < w[1]:
+        if not scan_done(sess): return "scan", sess, f"EOD scan due for session {sess} (window {w[0]:%Y-%m-%d %H:%M}-{w[1]:%Y-%m-%d %H:%M} UTC, none recorded yet)"
+        return "monitor", sess, f"EOD scan for {sess} already recorded: running as monitor"
+    return "monitor", None, "not in an EOD-scan window"
+
 def _runs(since):
     c = db.conn(); r = [dict(x) for x in c.execute("SELECT * FROM job_runs WHERE started_ts>=? ORDER BY started_ts", (since.isoformat(timespec="seconds"),))]; c.close(); return r
 
@@ -56,7 +95,8 @@ def missed_runs(now, lookback_h=26, tol_min=TOL_MIN, runs=None):
     for d, t in expected_scans(start, now - timedelta(minutes=tol_min)):
         nx = cal.schedule("US", d + timedelta(days=1), d + timedelta(days=10)); nxt_open = nx.iloc[0]["market_open"].to_pydatetime() if len(nx) else t + timedelta(days=3)
         # satisfied only by a successful scan/catch-up scan that started after this session's scan slot and BEFORE the next session opens (later runs do not hide a miss)
-        ok = [r for r in ex if r["job"] in ("scan", "catchup_scan") and r["status"] == "success" and t - timedelta(minutes=5) <= datetime.fromisoformat(r["started_ts"]) < nxt_open]
+        w0 = (eod_scan_window(d) or (t,))[0]                   # intent-based scan: any unattended run inside the EOD window may perform it (may start before the :41 slot)
+        ok = [r for r in ex if r["job"] in ("scan", "catchup_scan") and r["status"] == "success" and min(t, w0) - timedelta(minutes=5) <= datetime.fromisoformat(r["started_ts"]) < nxt_open]
         if not ok: miss.append({"job": "scan", "expected": t.isoformat(timespec="seconds"), "session": str(d)})
     return miss
 

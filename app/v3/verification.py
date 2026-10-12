@@ -65,7 +65,9 @@ def compute_session(d, now):
     scans = [r for r in scans if (nxt is None or datetime.fromisoformat(r["started_ts"]) < nxt)]
     # UNATTENDED evidence = runs started by the cron `schedule` event only. workflow_dispatch / push / manual runs are shown separately and NEVER count.
     real = [r for r in scans if r.get("run_id") and r.get("trigger") == "schedule"]; item["scan_occurred"] = int(bool(real))
-    manual = [r for r in scans if r.get("run_id") and r.get("trigger") != "schedule"]
+    ext = [r for r in scans if r.get("run_id") and r.get("trigger") == "external_scheduler"]
+    if ext: notes.append(f"{len(ext)} external_scheduler scan run(s) (repository_dispatch backup cron): unattended but counted ONLY in the separate external counter, NOT as event=schedule")
+    manual = [r for r in scans if r.get("run_id") and r.get("trigger") not in ("schedule", "external_scheduler")]
     if manual: notes.append(f"{len(manual)} manual/push scan run(s) ({', '.join(sorted({str(r.get('trigger')) for r in manual}))}) shown separately: NOT counted as unattended evidence")
     if scans and not real and not manual: notes.append("scan has no real run id (not counted as real evidence)")
     on_time = any(r["job"] == "scan" for r in real)
@@ -151,9 +153,14 @@ def summary(now=None):
     try:
         cs = cal.current_or_next_session("US", now); nxt_session = str(cs[0]) if cs else None
     except Exception: pass
-    c = db.conn(); manual_runs = [dict(r) for r in c.execute("SELECT job,trigger,started_ts,status,run_id FROM job_runs WHERE trigger!='schedule' AND status!='skipped' AND run_id IS NOT NULL ORDER BY id DESC LIMIT 12")]
-    sched_runs = c.execute("SELECT COUNT(*) n FROM job_runs WHERE trigger='schedule' AND status IN ('success','failed')").fetchone()["n"]; c.close()
+    c = db.conn(); manual_runs = [dict(r) for r in c.execute("SELECT job,trigger,started_ts,status,run_id FROM job_runs WHERE trigger NOT IN ('schedule','external_scheduler') AND status!='skipped' AND run_id IS NOT NULL ORDER BY id DESC LIMIT 12")]
+    sched_runs = c.execute("SELECT COUNT(*) n FROM job_runs WHERE trigger='schedule' AND status IN ('success','failed')").fetchone()["n"]
+    ext_runs = c.execute("SELECT COUNT(*) n FROM job_runs WHERE trigger='external_scheduler' AND status IN ('success','failed')").fetchone()["n"]
+    ext_list = [dict(r) for r in c.execute("SELECT job,trigger,started_ts,status,run_id FROM job_runs WHERE trigger='external_scheduler' AND status!='skipped' ORDER BY id DESC LIMIT 12")]
+    ext_scan_sessions = c.execute("SELECT COUNT(DISTINCT session) n FROM (SELECT substr(idem_key, instr(idem_key, ':')+1) session FROM job_runs WHERE trigger='external_scheduler' AND job IN ('scan','catchup_scan') AND status='success' AND run_id IS NOT NULL)").fetchone()["n"]; c.close()
     return {"counted_basis": "sessions are counted ONLY from runs whose GitHub event_name is 'schedule' (unattended cron); manual/push runs are listed separately and never count", "scheduled_runs_recorded": sched_runs, "manual_runs_not_counted": manual_runs,
+            "external_scheduler_runs_recorded": ext_runs, "external_scheduler_scan_sessions": ext_scan_sessions, "external_scheduler_runs": ext_list,
+            "external_scheduler_basis": "SEPARATE counter: runs started by the external backup cron (repository_dispatch type external-cron). Unattended, but NOT event=schedule: they never count toward the scheduled-session streak above.",
             "status": status, "required_sessions": REQUIRED, "consecutive_qualifying": streak, "total_qualifying": total_q, "failed_sessions": n_failed, "start_session": str(st) if st else None,
             "sessions": rows[-40:], "items": ITEMS, "next_session": nxt_session, "started_after_v3_migration_ts": _meta("v3_applied_ts"),
             "honesty": f"{streak} of {REQUIRED} qualifying consecutive sessions completed. Nothing is claimed beyond recorded evidence. Sessions are only counted after their deadline (next open) with a real run id."}

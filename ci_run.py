@@ -1,4 +1,5 @@
-"""One CI run (GitHub Actions). Usage: python ci_run.py scan|monitor|control|weekly|export
+"""One CI run (GitHub Actions). Usage: python ci_run.py auto|scan|monitor|control|weekly|export
+'auto' = unattended run (cron `schedule` or external `repository_dispatch`): scan vs monitor is decided by INTENT (app/v3/schedule.classify), idempotently per session.
 v3 flow: ingest gate skips -> single-writer lease (mode 'actions') -> idempotent job record (job_runs) -> apply owner control (file + workflow_dispatch inputs; validated, audited)
 -> action -> reconciliation/verification -> release lease. A failed engine run is RECORDED in job_runs, persisted, and the process exits non-zero at the end (workflow shows red).
 Writes $GITHUB_OUTPUT: changed=true|false, engine_status=ok|failed|skipped|duplicate."""
@@ -38,7 +39,7 @@ def do_scan(prov, now, job):
 
 def main(a):
     now = datetime.now(timezone.utc); engine.ready(); changed = False; status = "ok"
-    ev = os.environ.get("GITHUB_EVENT_NAME", "manual"); run_id = os.environ.get("GITHUB_RUN_ID"); actor = os.environ.get("GITHUB_ACTOR", "owner")
+    ev = jobs.trigger_class(os.environ.get("GITHUB_EVENT_NAME", "manual")); unattended = ev in ("schedule", "external_scheduler"); run_id = os.environ.get("GITHUB_RUN_ID"); actor = os.environ.get("GITHUB_ACTOR", "owner")
     cdir = os.environ.get("AITL_CONTROL_DIR"); holder = f"actions:{run_id or 'local'}"
     if cdir:
         try: jobs.ingest_gate_skips(os.path.join(os.path.dirname(cdir.rstrip('/')), "status", "skips.json"))
@@ -46,6 +47,11 @@ def main(a):
     ok, why = jobs.acquire_lease(holder, "actions", now=now, run_id=run_id)
     if not ok:
         jobs.record_skip(a, now, f"writer lease: {why}", ev, run_id); print("SKIPPED:", why); _out(changed="true", engine_status="skipped"); return
+    cls = None
+    if a == "auto":
+        a, sess, why = S.classify(now); cls = {"classified_as": a, "reason": why, "trigger": ev}; print("classify:", json.dumps(cls))
+        if a == "scan" and S.eod_scan_done(sess):              # re-checked under the writer lease (idempotent: never a second scan for one session)
+            a = "monitor"; cls["reason"] += "; scan recorded meanwhile -> monitor"
     sd_prev = cal.last_completed_session("US", now); job = {"scan": "scan", "scan_all": "scan", "monitor": "monitor", "weekly": "weekly", "control": "control", "export": "export"}.get(a, a)
     jid = jobs.begin(job, now, ev, run_id, session=str(sd_prev))
     if jid is None:
@@ -61,12 +67,12 @@ def main(a):
         prov = YFinanceProvider()
         try: from app import ai; st = ai.status(); print("AI status:", st["label"], json.dumps(st["probes"])[:400]); db.event("INFO", "ai", "AI status: " + st["label"])
         except Exception as e: print("AI status failed", e)
-        detail = {}
+        detail = {"classification": cls} if cls else {}
         if a in ("scan", "scan_all"):
             detail = do_scan(prov, now, job); changed = True
         elif a == "monitor":
             inwin = S.monitor_window(now)
-            if ev == "schedule" and not inwin[0]:
+            if unattended and not inwin[0]:
                 jobs.finish(jid, "skipped", None, {"reason": inwin[4]}, now); jobs.record_skip("monitor", now, inwin[4], ev, run_id); db.heartbeat("last_ci_run", "monitor-skipped"); jobs.release_lease(holder); _out(changed="false", engine_status="skipped"); return
             prev = cal.last_completed_session("US", now)
             if not _scan_done_for(prev, now):                       # self-healing: the scheduled scan for the last session never ran -> catch-up scan now (orders become eligible next session, honest)
