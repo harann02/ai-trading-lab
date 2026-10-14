@@ -58,7 +58,10 @@ def with_today(frames, date="2026-10-13", gap=1.002, syms=None):
     return out
 
 def run_scan_and_fill(frames, trade=True):
-    from app import engine
+    from app import engine, ledger
+    # Credit starting capital BEFORE the frozen test clock. Otherwise engine.ready() credits it at wall-clock now, i.e. AFTER the fixed 2026-10-13 trades once real time
+    # passes NOW_OPEN, and as-of reports for the test date legitimately exclude it (time-bomb that surfaced on 2026-10-14). No-op if already initialised.
+    ledger.init_account(NOW_CLOSED - __import__("datetime").timedelta(days=1))
     p = FakeProvider(frames)
     engine.scan(p, NOW_CLOSED + __import__("datetime").timedelta(hours=1), market="BURSA", trade=trade)
     p2 = FakeProvider(with_today(frames))

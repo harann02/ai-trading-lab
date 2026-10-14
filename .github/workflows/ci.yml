@@ -12,5 +12,7 @@ jobs:
         with: { python-version: "3.12", cache: pip }
       - run: pip install -r requirements.txt
       - run: pip install playwright   # uses the runner's google-chrome (no browser download)
-      - run: python -m pytest -q | tee pytest-ci.txt
-      - run: tail -3 pytest-ci.txt >> "$GITHUB_STEP_SUMMARY"
+      - shell: bash
+        run: set -o pipefail; python -m pytest -q | tee pytest-ci.txt   # pipefail: a pytest failure FAILS the step (tee would mask it)
+      - if: always()
+        run: tail -3 pytest-ci.txt >> "$GITHUB_STEP_SUMMARY" || true
