@@ -103,3 +103,9 @@ def test_ci_run_auto_external_records_trigger_class(env2, monkeypatch):
 def test_all_tools_compile():
     import py_compile, glob
     for f in glob.glob(os.path.join(ROOT, "tools", "*.py")) + [os.path.join(ROOT, "ci_run.py"), os.path.join(ROOT, "export_static.py")]: py_compile.compile(f, doraise=True)
+
+def test_ci_pytest_steps_use_pipefail():
+    import pathlib, re
+    for f in pathlib.Path(__file__).resolve().parents[1].joinpath(".github", "workflows").glob("*.yml"):
+        for line in f.read_text().splitlines():
+            if re.search(r"python -m pytest[^|]*\|", line): assert "set -o pipefail" in line, f"{f.name}: piped pytest without pipefail: {line.strip()}"
