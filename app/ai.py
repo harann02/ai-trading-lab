@@ -138,7 +138,7 @@ def output_summary(window_days=WINDOW_DAYS, now=None):
     return out
 
 def derive_state(provider_reachable, configured, disabled, summ, probes=()):
-    """Pure function: the four SEPARATE indicators and the headline. 'AI ACTIVE — VERIFIED' only if >=1 model-written output was accepted in the window."""
+    """Pure function: the four SEPARATE indicators and the headline. 'AI ACTIVE — VERIFIED' only if >=1 model-written output was accepted in the window AND the latest attempt was not a template fallback AND no provider probe failed; otherwise 'AI DEGRADED'."""
     acc = summ.get("accepted_count", 0)
     cats = {x.get("category") for x in probes if not x.get("ok")}
     transient = bool(cats) and cats <= {"network_error", "timeout", "rate_limited", "server_error", "payment_required", "non_json_response", "empty_output"}
@@ -147,9 +147,16 @@ def derive_state(provider_reachable, configured, disabled, summ, probes=()):
            "template_fallback": {"active": acc == 0 or summ.get("last_attempt_mode") not in (None, "llm"), "template_count": summ.get("template_count", 0), "last_template_ts": summ.get("last_template_ts")},
            "ai_unavailable": {"active": bool(configured) and not provider_reachable and not disabled, "failed_count": summ.get("failed_count", 0)}}
     w = summ.get("window_days", WINDOW_DAYS)
-    if acc >= 1:
-        state = "AI ACTIVE — VERIFIED"; label = f"AI ACTIVE — VERIFIED: {acc} model-written report(s) accepted in the last {w} days (last accepted {summ.get('last_accepted_ts')}); rejected {summ.get('rejected_count', 0)}, failed {summ.get('failed_count', 0)}"
-        if ind["template_fallback"]["active"]: label += "; latest output used the template fallback"
+    probe_failed = bool(configured) and not disabled and (not provider_reachable or bool(cats))
+    last_fallback = summ.get("last_attempt_mode") not in (None, "llm")
+    if acc >= 1 and (last_fallback or probe_failed):
+        why = []
+        if last_fallback: why.append(f"latest attempt fell back ({summ.get('last_attempt_mode')}, {summ.get('last_attempt_ts')})")
+        if probe_failed: why.append("provider probe failed" + (": " + ", ".join(sorted(c for c in cats if c)) if cats else ""))
+        state = "AI DEGRADED"; label = (f"AI DEGRADED: {'; '.join(why)}. {acc} model-written report(s) accepted in the last {w} days (last accepted {summ.get('last_accepted_ts')}); "
+                                        f"last template fallback {summ.get('last_template_ts')}; rejected {summ.get('rejected_count', 0)}, failed {summ.get('failed_count', 0)}; labeled templates used when the model is unavailable")
+    elif acc >= 1:
+        state = "AI ACTIVE — VERIFIED"; label = f"AI ACTIVE — VERIFIED: {acc} model-written report(s) accepted in the last {w} days (last accepted {summ.get('last_accepted_ts')}); latest attempt accepted and latest provider probe passed; rejected {summ.get('rejected_count', 0)}, failed {summ.get('failed_count', 0)}"
     elif disabled: state, label = "AI TEMPLATE MODE", "AI TEMPLATE MODE: LLM disabled by AITL_LLM_DISABLED; labeled deterministic templates are used"
     elif not configured: state, label = "AI TEMPLATE MODE", "AI TEMPLATE MODE: no LLM provider configured (add a free key, see docs/AI_SETUP.md); labeled deterministic templates are used"
     elif provider_reachable: state, label = "TEMPLATE FALLBACK ACTIVE", f"TEMPLATE FALLBACK ACTIVE: provider reachable but 0 model-written reports accepted in the last {w} days (rejected {summ.get('rejected_count', 0)}, failed {summ.get('failed_count', 0)}); labeled templates are used"

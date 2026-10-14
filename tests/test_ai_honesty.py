@@ -85,6 +85,14 @@ def test_derive_state_pure_function_matrix():
     assert ai.derive_state(False, ["g"], False, S(), [{"ok": False, "category": "timeout"}])[0] == "AI UNAVAILABLE"
     assert ai.derive_state(False, ["g"], False, S(), [{"ok": False, "category": "auth_error"}])[0] == "AI ERROR"
     assert ai.derive_state(False, [], False, S())[0] == "AI TEMPLATE MODE" and ai.derive_state(False, ["g"], True, S())[0] == "AI TEMPLATE MODE"
+    # DEGRADED: accepted output exists but the latest attempt fell back to template, or the provider probe fails -> never "VERIFIED"
+    st, lab, _ = ai.derive_state(True, ["g"], False, S(accepted_count=3, last_accepted_ts="t1", last_attempt_mode="template", last_attempt_ts="t2", last_template_ts="t2"))
+    assert st == "AI DEGRADED" and "VERIFIED" not in st + lab and "3 model-written" in lab and "t2" in lab
+    st, lab, _ = ai.derive_state(False, ["g"], False, S(accepted_count=1, last_accepted_ts="t", last_attempt_mode="llm"), [{"ok": False, "category": "timeout"}])
+    assert st == "AI DEGRADED" and "probe failed" in lab and "VERIFIED" not in lab
+    st, lab, _ = ai.derive_state(True, ["g"], False, S(accepted_count=1, last_accepted_ts="t", last_attempt_mode="llm"), [{"ok": True, "category": None}, {"ok": False, "category": "auth_error"}])
+    assert st == "AI DEGRADED"
+    assert ai.derive_state(True, ["g"], False, S(accepted_count=1, last_accepted_ts="t", last_attempt_mode="llm"))[0] == "AI ACTIVE — VERIFIED"
     for args in ((True, ["g"], False, S()), (False, ["g"], False, S()), (False, [], False, S())): assert "VERIFIED" not in " ".join(ai.derive_state(*args)[:2])
 
 def test_exported_site_has_four_indicators_and_no_verified_without_output(tmp_path, monkeypatch):
