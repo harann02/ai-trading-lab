@@ -1,6 +1,6 @@
 # Unattended-scheduling monitoring routine
 
-**Principle:** only runs whose GitHub `event_name` is `schedule` count as unattended evidence. Every run records `event_name` in `job_runs.trigger` and in heartbeat `last_ci_run` (`...|event=<name>|counts_as_unattended=<bool>`). The Verification tab counts a session only from `schedule` runs and lists manual / push runs separately. Nothing in this repo dispatches a run to simulate the schedule.
+**Principle:** only unattended runs count as evidence: GitHub `schedule` (labelled `github-schedule`) and the external backup cron `repository_dispatch` `external-cron` (trigger class `external_scheduler`, labelled `external-backup`). Manual/push never count. Every run records `event_name` in `job_runs.trigger` and in heartbeat `last_ci_run` (`...|event=<name>|counts_as_unattended=<bool>`). The Verification tab counts a session only from unattended runs (source shown per session) and lists manual / push runs separately. Nothing in this repo dispatches a run to simulate the schedule.
 
 ## Facts that make cron work (checked via API 2026-10-12)
 * Schedule triggers only run from the **default branch (`main`)**; the three workflows (`scan-monitor-deploy`, `watchdog`, `ai-probe`, `ci`) were `active` on main.

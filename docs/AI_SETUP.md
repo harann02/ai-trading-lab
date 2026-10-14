@@ -4,7 +4,8 @@
 
 | Status | Meaning |
 |---|---|
-| `AI ACTIVE — VERIFIED` | a **real probe call** in this run returned valid JSON that copies supplied facts exactly (grounded). Shows provider + model. |
+| `AI DEGRADED` | model output was accepted in the window, BUT the latest attempt fell back to the template or a provider probe failed this run. Shows accepted count and last fallback time. Never labelled VERIFIED. |
+| `AI ACTIVE — VERIFIED` | ≥1 model-written report accepted in the window AND the latest attempt was model-written AND the provider probe in this run passed (grounded JSON). Shows provider + model. |
 | `AI TEMPLATE MODE` | no provider configured (or disabled): deterministic labeled templates `[TEMPLATE …]` |
 | `AI UNAVAILABLE` | providers configured but unreachable / rate-limited / not serving JSON (`network_error`, `timeout`, `rate_limited`, `server_error`, `payment_required`, `non_json_response`) |
 | `AI ERROR` | auth errors or invalid/ungrounded output (`auth_error`, `invalid_json`, `ungrounded_output`, `http_error`) |

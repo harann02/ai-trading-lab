@@ -59,16 +59,38 @@ def test_trigger_class_and_shared_idempotency(env2):
     assert jobs.begin("scan", t + timedelta(hours=2), "external_scheduler", "2", session="2026-10-13") is None   # no double scan across triggers
     assert S.eod_scan_done(date(2026, 10, 13)) is True
 
-def test_external_runs_separate_counter_never_schedule(env2):
+def test_external_runs_count_as_unattended_labelled(env2):
     sd = V.start_session() or date(2026, 10, 12)
     h, nxt = V._session_window(sd); at = h[1] + timedelta(hours=2)
     c = db.conn(); c.execute("INSERT INTO job_runs(idem_key,job,trigger,scheduled_for,started_ts,finished_ts,status,run_id) VALUES(?,?,?,?,?,?,?,?)",
                              (f"scan:{sd}", "scan", "external_scheduler", *(at.isoformat(timespec="seconds"),) * 3, "success", "777")); c.commit(); c.close()
     item, fails, notes = V.compute_session(sd, at + timedelta(hours=1))
-    assert item["scan_occurred"] == 0 and any("external_scheduler" in n for n in notes)
+    assert item["scan_occurred"] == 1 and item["scan_source"] == "external-backup" and any("external backup" in n for n in notes)
+    assert "no real scan before the next open (missed run)" not in fails and "scheduled scan missed (catch-up only)" not in fails
     s = V.summary(at + timedelta(hours=1))
-    assert s["scheduled_runs_recorded"] == 0 and s["external_scheduler_runs_recorded"] == 1 and s["external_scheduler_scan_sessions"] == 1
-    assert all(r["trigger"] != "external_scheduler" for r in s["manual_runs_not_counted"]) and "NOT event=schedule" in s["external_scheduler_basis"]
+    assert s["scheduled_runs_recorded"] == 0 and s["external_scheduler_runs_recorded"] == 1 and s["external_scheduler_scan_sessions"] == 1 and s["unattended_runs_recorded"] == 1
+    assert s["source_breakdown"]["external-backup"]["scan_sessions"] == 1 and s["source_breakdown"]["github-schedule"]["runs_recorded"] == 0
+    assert all(r["trigger"] != "external_scheduler" for r in s["manual_runs_not_counted"]) and "external_scheduler" in s["unattended_triggers"]
+
+def test_manual_and_push_scans_never_count(env2):
+    sd = V.start_session() or date(2026, 10, 12)
+    h, nxt = V._session_window(sd); at = h[1] + timedelta(hours=2)
+    c = db.conn()
+    for i, tr in enumerate(("workflow_dispatch", "push")):
+        c.execute("INSERT INTO job_runs(idem_key,job,trigger,scheduled_for,started_ts,finished_ts,status,run_id) VALUES(?,?,?,?,?,?,?,?)",
+                  (f"scan:{sd}:{tr}", "scan", tr, *(at.isoformat(timespec="seconds"),) * 3, "success", str(800 + i)))
+    c.commit(); c.close()
+    item, fails, notes = V.compute_session(sd, at + timedelta(hours=1))
+    assert item["scan_occurred"] == 0 and item["scan_source"] is None and "no real scan before the next open (missed run)" in fails
+    s = V.summary(at + timedelta(hours=1)); assert s["unattended_runs_recorded"] == 0 and len(s["manual_runs_not_counted"]) == 2
+
+def test_github_schedule_scan_labelled(env2):
+    sd = V.start_session() or date(2026, 10, 12)
+    h, nxt = V._session_window(sd); at = h[1] + timedelta(hours=2)
+    c = db.conn(); c.execute("INSERT INTO job_runs(idem_key,job,trigger,scheduled_for,started_ts,finished_ts,status,run_id) VALUES(?,?,?,?,?,?,?,?)",
+                             (f"scan:{sd}", "scan", "schedule", *(at.isoformat(timespec="seconds"),) * 3, "success", "778")); c.commit(); c.close()
+    item, fails, notes = V.compute_session(sd, at + timedelta(hours=1))
+    assert item["scan_occurred"] == 1 and item["scan_source"] == "github-schedule" and set(item["monitor_runs_by_source"]) == {"github-schedule", "external-backup"}
 
 def test_ci_run_auto_external_records_trigger_class(env2, monkeypatch):
     import ci_run
