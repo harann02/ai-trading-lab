@@ -210,7 +210,7 @@ def data_file(name: str):
         raise HTTPException(404, "snapshot not generated yet - POST /api/scan or wait a few seconds")
     return FileResponse(p, headers={"Cache-Control": "no-store"})
 
-ALLOWED_ASSETS = ("app.js", "controls.js", "v3.js", "v3b.js", "style.css", "lightweight-charts.js")      # every asset index.html loads (F-6: v3.js/v3b.js were missing -> 404)
+ALLOWED_ASSETS = ("app.js", "controls.js", "v3.js", "v3b.js", "glossary.js", "help.js", "style.css", "lightweight-charts.js")      # every asset index.html loads (F-6: v3.js/v3b.js were missing -> 404)
 @app.get("/")
 def index(): return FileResponse(ROOT / "site_src" / "index.html")
 @app.get("/{fn}")

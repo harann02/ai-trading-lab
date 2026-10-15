@@ -45,3 +45,27 @@ main>*,section{min-width:0}section{overflow-x:auto}pre,code,.memo,.note,.errbox{
 .btn.on{border-color:var(--g);color:var(--g)}.card.wide2{grid-column:span 2}.chart.h340{height:340px}.warn{color:var(--y)}.mid{color:var(--y)}
 details{margin:6px 0;border:1px solid var(--line);border-radius:5px;padding:4px 8px}summary{cursor:pointer}
 @media (max-width:520px){.card.wide2{grid-column:span 2}.chart.h340{height:260px}table{font-size:11px}}
+
+/* ---- v4: beginner-friendly presentation layer (info icons, plain labels, glance, learn) ---- */
+:root{--g:#2fbf71;--r:#f2635f;--n:#8a9aab;--panel:#121a24;--line:#223041}
+body{font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+td,th,.card .v,.mono,pre,code,.memo,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+main{gap:16px;padding:16px}section{padding:14px 16px;border-radius:10px}
+h2{font-size:15px;text-transform:none;letter-spacing:0;color:#e6f0f8;font-weight:650}h3{font-size:13px;color:#a9bccd;margin:14px 0 6px}
+.card{padding:10px 12px;border-radius:8px}.card .l{text-transform:none;font-size:12px;color:#c3d3e0;display:flex;flex-wrap:wrap;gap:2px 6px;align-items:baseline}
+.card .l .plain{font-weight:600}.tech{color:var(--n);font-size:11px;font-weight:400}.card .s{font-size:11px;line-height:1.4}
+.card .v{font-size:19px}.note{font-size:12px;line-height:1.5}
+.dim{color:var(--n)}.pos,.ok{color:var(--g)}.neg,.bad{color:var(--r)}
+.chip.ok::before{content:"✓ "}.chip.bad::before{content:"✕ "}.chip.mid::before{content:"! "}
+button.info{all:unset;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 3px;border-radius:50%;color:#8fc4ff;font-size:14px;line-height:1;cursor:help;vertical-align:middle;flex:none}
+button.info:hover,button.info[aria-expanded=true]{color:#fff;background:#1f3a5a}button.info:focus-visible{outline:2px solid #8fc4ff;outline-offset:1px}
+th button.info{min-width:18px;height:18px;font-size:12px}
+.helppop{position:absolute;z-index:50;background:#182433;color:#e8f1f8;border:1px solid #3b5a7a;border-radius:10px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.55);font:13px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:calc(100vw - 16px)}
+.helppop p{margin:6px 0}.helppop .hp-h{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;padding-right:22px;position:relative}.helppop .hp-x{position:absolute;right:-6px;top:-4px;background:none;border:0;color:#aac;font-size:18px;padding:0 6px;cursor:pointer}
+.helppop.hidden{display:none}
+.glance{border-color:#2f5a44;background:linear-gradient(180deg,#13241c,#121a24)}.glance h2{font-size:17px;color:#e6f0f8}.glance p{margin:6px 0;font-size:15px}.glance p.dim,.glance p.note{font-size:12.5px}
+.learn dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin:0}.learn .term{background:#0e151e;border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.learn dt{font-weight:650;color:#e6f0f8}.learn dd{margin:4px 0 0;color:#c3d3e0;font-size:13px}.learn dd p{margin:4px 0}
+nav a.learn-tab{color:#8fc4ff}nav a.learn-tab.on{color:var(--g)}
+.banner{font-weight:600;font-size:12.5px}
+@media (max-width:520px){body{font-size:13px}main{padding:8px;gap:10px}section{padding:10px}.glance p{font-size:14px}.card .v{font-size:16px}}
