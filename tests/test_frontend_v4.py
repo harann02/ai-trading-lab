@@ -19,6 +19,17 @@ def test_glossary_file_exported_and_complete(site):
     for k in REQUIRED: assert f"k: '{k}'" in g or f'k: "{k}"' in g, k
     assert all(x in g for x in ("what:", "read:", "good:", "match:"))
 
+def test_glossary_matches_key_labels():
+    """Regression: labels must map to the right explanation (e.g. 'Scheduler health' is not 'US market')."""
+    import shutil
+    node = shutil.which("node")
+    if not node: pytest.skip("no node")
+    js = "global.window={};eval(require('fs').readFileSync(%r,'utf8'));const f=t=>{for(const g of window.GLOSSARY)if(new RegExp(g.match,'i').test(t))return g.k};" % os.path.join(ROOT, "site_src", "glossary.js")
+    cases = {"Scheduler health": "scheduler", "US market": "market", "Market data as of": "marketdata", "Portfolio (MYR)": "equity", "Max drawdown": "drawdown", "AI engine": "ai", "Total P&L": "total_pnl", "Win rate": "winrate", "SPY shadow": "shadow", "FORWARD TRADING VERIFICATION": "verification"}
+    js += "console.log(JSON.stringify(%s.map(f)))" % json.dumps(list(cases))
+    out = json.loads(subprocess.run([node, "-e", js], capture_output=True, text=True, check=True).stdout)
+    assert out == list(cases.values()), dict(zip(cases, out))
+
 def test_learn_tab_and_help_wired(site):
     html = (site / "index.html").read_text()
     assert 'data-t="learn"' in html and "glossary.js" in html and "help.js" in html and "Learn the basics" in html

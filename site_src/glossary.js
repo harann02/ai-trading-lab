@@ -50,7 +50,7 @@ window.GLOSSARY = [
   { k: 'strategies_active', group: 'Strategies', term: 'Active strategies', plain: 'Strategies allowed to trade', match: '^active strategies|strategies at a glance',
     what: 'A strategy is a fixed set of rules for choosing what to buy and when to sell. Only active ones may open new trades.',
     read: 'Currently only the swing strategy is allowed to trade.', good: 'Fewer active strategies = simpler and easier to judge.' },
-  { k: 'market', group: 'Market', term: 'US market open/closed', plain: 'Is the US stock market open?', match: '^us market|^us (open|closed|pre|post)|schedule',
+  { k: 'market', group: 'Market', term: 'US market open/closed', plain: 'Is the US stock market open?', match: '^us market|^us (open|closed|pre|post)|^us schedule',
     what: 'The bot trades US stocks, so it follows US market hours (shown in Malaysia time, MYT).',
     read: 'US trading hours are about 21:30–04:00 or 22:30–05:00 MYT depending on US daylight saving.', good: 'Neutral information.' },
   { k: 'fx_pnl', group: 'Costs & currency', term: 'Stock vs currency P&L', plain: 'Gain/loss from stocks vs from the exchange rate', match: 'stock vs currency',
