@@ -35,7 +35,7 @@ DASH_USER=me DASH_PASS=... .venv/bin/uvicorn app.main:app --host 127.0.0.1 --por
 ## Schedule (GitHub Actions; cron is best effort, minimum 5 min)
 | Job | When (UTC) | MYT |
 |---|---|---|
-| scan | 21:30 Mon-Fri | 05:30 Tue-Sat (after the NYSE close in both EDT and EST) |
+| scan | from NYSE close + 30 min (20:30 EDT / 21:30 EST; cron slot 21:41) Mon-Fri | about 04:30 (US summer) / 05:30 (US winter) Tue-Sat: first unattended run (GitHub cron or external backup) after final daily bars |
 | monitor | every 15 min 13:00-21:59 Mon-Fri (gated by the NYSE calendar; skips recorded) | covers the full session in EDT and EST |
 | weekly report | Sat 02:00 | Sat 10:00 |
 | manual / owner-control | `workflow_dispatch` | any time |

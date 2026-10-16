@@ -52,7 +52,7 @@ window.GLOSSARY = [
     read: 'Currently only the swing strategy is allowed to trade.', good: 'Fewer active strategies = simpler and easier to judge.' },
   { k: 'market', group: 'Market', term: 'US market open/closed', plain: 'Is the US stock market open?', match: '^us market|^us (open|closed|pre|post)|^us schedule',
     what: 'The bot trades US stocks, so it follows US market hours (shown in Malaysia time, MYT).',
-    read: 'US trading hours are about 21:30–04:00 or 22:30–05:00 MYT depending on US daylight saving.', good: 'Neutral information.' },
+    read: 'US trading hours are about 21:30–04:00 or 22:30–05:00 MYT depending on US daylight saving. The daily scan runs from 30 min after the NYSE close (about 04:30 MYT in US summer time / 05:30 MYT in winter; earlier on early-close days), done by the first unattended run once final daily bars are available.', good: 'Neutral information.' },
   { k: 'fx_pnl', group: 'Costs & currency', term: 'Stock vs currency P&L', plain: 'Gain/loss from stocks vs from the exchange rate', match: 'stock vs currency',
     what: 'Your account is in RM but US stocks are priced in US dollars. This splits the result into the part from the stocks themselves and the part from the RM/USD exchange rate (including the FX spread fee).',
     read: 'First number: from stocks. Second: from currency.', good: 'With no trades yet, any loss shown comes only from currency conversion.' },

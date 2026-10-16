@@ -190,7 +190,7 @@ function viewActivity(root) {
   const hrows = Object.values(hb).map(x => ({ name: x.name, ts: x.ts, info: (x.info || '').slice(0, 90) }));
   root.innerHTML = `<section><h2>Activity monitor</h2><div class="note">${esc(m.scheduler)}</div>
   <div>Last scan: <b>${esc(myt((hb.last_scan || {}).ts))}</b> (${ago((hb.last_scan || {}).ts)})</div><div>Last workflow run: <b>${esc(myt((hb.last_ci_run || {}).ts))}</b> – ${esc((hb.last_ci_run || {}).info)} ${meta.run_url ? `<a href="${esc(meta.run_url)}">run #${esc(meta.run_number)}</a>` : ''}</div>
-  <div>Next scan: after the next US close – cron 21:30 UTC Mon–Fri = <b>05:30 MYT Tue–Sat</b>; monitor every ~15 min during US hours (best effort).</div>
+  <div>Next scan: <b>from 30 min after the NYSE close (about 04:30 MYT in US summer time / 05:30 MYT in winter; earlier on early-close days), done by the first unattended run once final daily bars are available</b> (Tue–Sat MYT; GitHub cron or external backup, whichever comes first); monitor every ~15 min during US hours (best effort).</div>
   <div>Data: SPY last bar ${esc(fr.spy_last_bar)} · expected ${esc(fr.expected_last_completed_session)} → ${fr.spy_last_bar === fr.expected_last_completed_session ? '<span class="ok">fresh</span>' : '<span class="bad">STALE → trading blocked</span>'}</div>
   <div>Triggered by: ${esc(meta.trigger)} · platform ${esc(meta.platform_version)} · controls applied so far: ${esc(meta.controls_applied_count)}</div>
   <h3>Heartbeats</h3>${table([{ h: 'Name', l: 1, v: r => r.name }, { h: 'Last', l: 1, v: r => r.ts, f: r => myt(r.ts) + ' (' + ago(r.ts) + ')' }, { h: 'Info', l: 1, v: r => r.info }], hrows, { id: 'hb' })}
