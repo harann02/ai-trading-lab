@@ -74,7 +74,8 @@ def compute_session(d, now):
     manual = [r for r in scans if r.get("run_id") and r.get("trigger") not in UNATTENDED]
     if manual: notes.append(f"{len(manual)} manual/push scan run(s) ({', '.join(sorted({str(r.get('trigger')) for r in manual}))}) shown separately: NOT counted as unattended evidence")
     if scans and not real and not manual: notes.append("scan has no real run id (not counted as real evidence)")
-    on_time = any(r["job"] == "scan" for r in real)
+    # ON-TIME = an unattended 'scan' (github-schedule or external-backup) started inside the EOD window [close+30 min, next open). Catch-up label only if it lapsed.
+    w = S.eod_scan_window(d); on_time = any(r["job"] == "scan" and (w is None or w[0] <= datetime.fromisoformat(r["started_ts"]) < w[1]) for r in real)
     fs = c.execute("SELECT * FROM forward_sessions WHERE session_date=?", (str(d),)).fetchone(); fs = dict(fs) if fs else {}
     for k in ("data_retrieved", "stocks_evaluated", "candidates", "passed_risk"): item[k] = fs.get(k)
     ds, de = o.isoformat(timespec="seconds"), (nxt or cl + timedelta(days=3)).isoformat(timespec="seconds")

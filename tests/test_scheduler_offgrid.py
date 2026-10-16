@@ -30,13 +30,13 @@ def test_expected_monitor_slots_are_offset():
 
 def test_classify_by_intent_delayed_and_dropped_slots():
     done = lambda s: False
-    # summer (EDT close 20:00): scan due from 21:30 UTC; a delayed monitor slot (21:49) or a late external run still yields the scan
+    # summer (EDT close 20:00): scan due from close+30 = 20:30 UTC; a delayed monitor slot (21:49) or a late external run still yields the scan
     assert S.classify(U(2026, 10, 13, 21, 41), done)[0] == "scan"
     assert S.classify(U(2026, 10, 13, 21, 49), done)[0] == "scan"
     assert S.classify(U(2026, 10, 14, 2, 0), done)[:2] == ("scan", date(2026, 10, 13))
-    assert S.classify(U(2026, 10, 13, 21, 19), done)[0] == "monitor"          # before the window: monitor
+    assert S.classify(U(2026, 10, 13, 20, 19), done)[0] == "monitor"          # before close+30 min: monitor
     assert S.classify(U(2026, 10, 14, 13, 34), done)[0] == "monitor"          # after the next open: no longer this session's on-time scan
-    # winter (EST close 21:00): window opens 21:30
+    # winter (EST close 21:00): window opens close+30 = 21:30
     assert S.classify(U(2026, 12, 15, 21, 34), done)[0] == "scan" and S.classify(U(2026, 12, 15, 21, 19), done)[0] == "monitor"
     # Friday session scanned on Saturday UTC
     assert S.classify(U(2026, 10, 17, 1, 0), done)[:2] == ("scan", date(2026, 10, 16))

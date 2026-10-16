@@ -16,7 +16,7 @@
 | watchdog `56 21 * * 1-5`, `11 */3 * * 1-5` | watchdog | opens an issue on missed runs / failures |
 | `repository_dispatch` `external-cron` | auto (optional external backup) | see `docs/EXTERNAL_CRON.md`; recorded as `external_scheduler` |
 All minutes are off-grid (never :00/:15/:30/:45) and no two schedules share a minute: on 2026-10-12 the old `30 21` scan collided with `*/15` and GitHub delivered a single run (classified monitor), so the scan was lost (issue #3).
-Scan vs monitor is decided by **intent** (`app/v3/schedule.classify`), not by which cron string fired: any unattended run inside the EOD-scan window (from max(close + 30 min, 21:30 UTC) until the next open) that finds no successful scan for that session performs it; idempotency key `scan:<session>` (shared by all unattended triggers) guarantees one scan per session.
+Scan vs monitor is decided by **intent** (`app/v3/schedule.classify`), not by which cron string fired: any unattended run inside the EOD-scan window (from NYSE close + 30 min — 20:30 UTC in EDT, 21:30 UTC in EST, 18:30 UTC on 13:00 ET early closes — until the next open, and only once the final daily bar is available) that finds no successful scan for that session performs it; idempotency key `scan:<session>` (shared by all unattended triggers) guarantees one scan per session.
 
 ## Routine (what to check and when)
 1. `GITHUB_TOKEN=<read token> python tools/check_schedule.py` (read-only): workflow `state` must be `active`; `schedule runs total` must grow.
