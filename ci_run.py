@@ -52,6 +52,9 @@ def main(a):
         a, sess, why = S.classify(now); cls = {"classified_as": a, "reason": why, "trigger": ev}; print("classify:", json.dumps(cls))
         if a == "scan" and S.eod_scan_done(sess):              # re-checked under the writer lease (idempotent: never a second scan for one session)
             a = "monitor"; cls["reason"] += "; scan recorded meanwhile -> monitor"
+        if a == "scan":
+            fb_ok, fb_why = S.final_bars_ready(YFinanceProvider(), sess); cls["final_bars"] = fb_why
+            if not fb_ok: a = "monitor"; cls["reason"] += f"; final daily bars not available yet ({fb_why}) -> monitor, scan deferred to the next run in the window"
     sd_prev = cal.last_completed_session("US", now); job = {"scan": "scan", "scan_all": "scan", "monitor": "monitor", "weekly": "weekly", "control": "control", "export": "export"}.get(a, a)
     jid = jobs.begin(job, now, ev, run_id, session=str(sd_prev))
     if jid is None:
@@ -75,7 +78,9 @@ def main(a):
             if unattended and not inwin[0]:
                 jobs.finish(jid, "skipped", None, {"reason": inwin[4]}, now); jobs.record_skip("monitor", now, inwin[4], ev, run_id); db.heartbeat("last_ci_run", "monitor-skipped"); jobs.release_lease(holder); _out(changed="false", engine_status="skipped"); return
             prev = cal.last_completed_session("US", now)
-            if not _scan_done_for(prev, now):                       # self-healing: the scheduled scan for the last session never ran -> catch-up scan now (orders become eligible next session, honest)
+            # self-healing ONLY when the last session's EOD window genuinely lapsed (now >= its next open) with no scan: catch-up scan, honestly labelled.
+            # Inside the window (close+30 min .. next open) the scan is classify()'s on-time 'scan'; before close+30 min nothing scans (final bars not settled).
+            if S.catchup_due(now, prev, lambda s_: _scan_done_for(s_, now)):
                 jid2 = jobs.begin("catchup_scan", now, ev, run_id, session=str(prev))
                 if jid2:
                     try: detail["catchup"] = do_scan(prov, now, "catchup_scan"); jobs.finish(jid2, "success", None, detail["catchup"], now)

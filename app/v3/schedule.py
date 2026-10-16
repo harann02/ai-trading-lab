@@ -12,8 +12,9 @@ MONITOR_STEP_MIN = 15
 MONITOR_OFFSET_MIN = 4       # cron '4,19,34,49 13-21 * * 1-5'
 POST_CLOSE_MIN = 25          # candles of the last bar become visible ~20 min after the close (5m bar + 15 min delay)
 SCAN_UTC = (21, 41)          # cron '41 21 * * 1-5' (off-grid; no monitor minute coincides)
-SCAN_EARLIEST_AFTER_CLOSE_MIN = 30   # EOD-scan window opens at max(close + 30 min, 21:30 UTC of the session day) ...
-SCAN_EARLIEST_UTC = (21, 30)         # ... and stays open until the next session's open
+SCAN_EARLIEST_AFTER_CLOSE_MIN = 30   # EOD-scan window opens at the NYSE close (calendar: DST + early closes) + 30 min, and only once the final daily bar exists,
+                                     # and stays open until the next session's open. The first unattended run (github-schedule OR external-backup) inside it is the
+                                     # ON-TIME scheduled scan; 'catchup_scan' is used ONLY when that window genuinely lapsed (run at/after the next session's open).
 WEEKLY_CRON = "13 2 * * 6"
 TOL_MIN = 25
 
@@ -41,7 +42,7 @@ def expected_monitor_runs(start_utc, end_utc):
     return out
 
 def expected_scans(start_utc, end_utc):
-    """One scan per NYSE session, due at 21:30 UTC of the session day (after the close in both EDT and EST)."""
+    """Nominal GitHub cron scan slot (21:41 UTC) per NYSE session; the scan itself may be done earlier by any unattended run inside eod_scan_window."""
     out = []; d = start_utc.date() - timedelta(days=1)
     while d <= end_utc.date():
         if cal.session_hours("US", d):
@@ -54,8 +55,7 @@ def eod_scan_window(session):
     """[start, end) UTC during which an unattended run performs the EOD scan for `session`: after the close (+ final bars), before the next open."""
     h = cal.session_hours("US", session)
     if not h: return None
-    floor = datetime(session.year, session.month, session.day, SCAN_EARLIEST_UTC[0], SCAN_EARLIEST_UTC[1], tzinfo=timezone.utc)
-    start = max(h[1] + timedelta(minutes=SCAN_EARLIEST_AFTER_CLOSE_MIN), floor)
+    start = h[1] + timedelta(minutes=SCAN_EARLIEST_AFTER_CLOSE_MIN)
     nx = cal.schedule("US", session + timedelta(days=1), session + timedelta(days=10))
     end = nx.iloc[0]["market_open"].to_pydatetime() if len(nx) else h[1] + timedelta(days=3)
     return start, end
@@ -80,6 +80,20 @@ def classify(now, scan_done=None):
         if not scan_done(sess): return "scan", sess, f"EOD scan due for session {sess} (window {w[0]:%Y-%m-%d %H:%M}-{w[1]:%Y-%m-%d %H:%M} UTC, none recorded yet)"
         return "monitor", sess, f"EOD scan for {sess} already recorded: running as monitor"
     return "monitor", None, "not in an EOD-scan window"
+
+def catchup_due(now, session, scan_done=None):
+    """True only when `session`'s EOD-scan window has genuinely LAPSED (now >= next open) with no scan recorded: the honest catch-up case.
+    Never before close + 30 min (the old monitor self-heal fired 8 min after the close and mislabelled the session's only scan as catch-up)."""
+    w = eod_scan_window(session) if session else None
+    return bool(w and now >= w[1] and not (scan_done or eod_scan_done)(session))
+
+def final_bars_ready(provider, session, symbol="SPY"):
+    """(ok, reason): the provider already serves the daily bar dated `session` (the final EOD bar). Otherwise the scan is deferred (not recorded) to the next run."""
+    try:
+        b = provider.daily([symbol], period="5d").get(symbol)
+        last = b.index[-1].date() if b is not None and len(b) else None
+    except Exception as e: return False, f"final-bar check failed: {e}"
+    return (last is not None and last >= session), f"{symbol} last daily bar {last} (session {session})"
 
 def _runs(since):
     c = db.conn(); r = [dict(x) for x in c.execute("SELECT * FROM job_runs WHERE started_ts>=? ORDER BY started_ts", (since.isoformat(timespec="seconds"),))]; c.close(); return r
