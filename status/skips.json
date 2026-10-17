@@ -1,0 +1,178 @@
+{
+"skips": [
+{
+"ts": "2026-10-12T21:38:31+00:00",
+"job": "monitor",
+"reason": "outside NYSE hours (09:30-16:00 ET)",
+"run_id": "38311842736"
+},
+{
+"ts": "2026-10-14T00:36:00+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-13 already recorded: running as monitor",
+"run_id": "38491038912"
+},
+{
+"ts": "2026-10-14T23:58:47+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-14 already recorded: running as monitor",
+"run_id": "38657268583"
+},
+{
+"ts": "2026-10-15T00:03:55+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-14 already recorded: running as monitor",
+"run_id": "38657780911"
+},
+{
+"ts": "2026-10-15T00:04:35+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-14 already recorded: running as monitor",
+"run_id": "38657842423"
+},
+{
+"ts": "2026-10-15T13:08:54+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-14 already recorded: running as monitor",
+"run_id": "38740170236"
+},
+{
+"ts": "2026-10-15T13:23:50+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-14 already recorded: running as monitor",
+"run_id": "38742246298"
+},
+{
+"ts": "2026-10-15T20:34:15+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); not in an EOD-scan window",
+"run_id": "38802941041"
+},
+{
+"ts": "2026-10-15T20:38:58+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); not in an EOD-scan window",
+"run_id": "38803559218"
+},
+{
+"ts": "2026-10-15T20:53:52+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); not in an EOD-scan window",
+"run_id": "38805547107"
+},
+{
+"ts": "2026-10-15T21:08:55+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); not in an EOD-scan window",
+"run_id": "38807536424"
+},
+{
+"ts": "2026-10-15T21:23:50+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); not in an EOD-scan window",
+"run_id": "38809458393"
+},
+{
+"ts": "2026-10-15T21:38:55+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-15 already recorded: running as monitor",
+"run_id": "38811382152"
+},
+{
+"ts": "2026-10-15T21:53:41+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-15 already recorded: running as monitor",
+"run_id": "38813211804"
+},
+{
+"ts": "2026-10-15T21:58:55+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-15 already recorded: running as monitor",
+"run_id": "38813807519"
+},
+{
+"ts": "2026-10-15T23:15:52+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-15 already recorded: running as monitor",
+"run_id": "38822449349"
+},
+{
+"ts": "2026-10-15T23:49:50+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-15 already recorded: running as monitor",
+"run_id": "38825838372"
+},
+{
+"ts": "2026-10-15T23:58:42+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-15 already recorded: running as monitor",
+"run_id": "38826730644"
+},
+{
+"ts": "2026-10-16T13:08:53+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-15 already recorded: running as monitor",
+"run_id": "38905555668"
+},
+{
+"ts": "2026-10-16T13:23:51+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-15 already recorded: running as monitor",
+"run_id": "38907442624"
+},
+{
+"ts": "2026-10-16T20:54:20+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-16 already recorded: running as monitor",
+"run_id": "38965459048"
+},
+{
+"ts": "2026-10-16T21:09:29+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-16 already recorded: running as monitor",
+"run_id": "38967245326"
+},
+{
+"ts": "2026-10-16T21:24:22+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-16 already recorded: running as monitor",
+"run_id": "38969004517"
+},
+{
+"ts": "2026-10-16T21:39:29+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-16 already recorded: running as monitor",
+"run_id": "38970706788"
+},
+{
+"ts": "2026-10-16T21:54:25+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-16 already recorded: running as monitor",
+"run_id": "38972326742"
+},
+{
+"ts": "2026-10-16T21:59:27+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-16 already recorded: running as monitor",
+"run_id": "38972843384"
+},
+{
+"ts": "2026-10-16T22:45:22+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-16 already recorded: running as monitor",
+"run_id": "38977566157"
+},
+{
+"ts": "2026-10-16T23:52:02+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-16 already recorded: running as monitor",
+"run_id": "38983584077"
+},
+{
+"ts": "2026-10-16T23:58:56+00:00",
+"job": "auto",
+"reason": "monitor: outside NYSE hours (09:30-16:00 ET); EOD scan for 2026-10-16 already recorded: running as monitor",
+"run_id": "38984134609"
+}
+]
+}

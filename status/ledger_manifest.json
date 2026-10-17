@@ -1,0 +1,13 @@
+{
+ "format": 1,
+ "seq": 70,
+ "ledger_count": 8,
+ "ledger_max_id": 8,
+ "ledger_chain_head": "d81b630e6262f13a47a13ddeaf206e09763e694b60426cf4ab0fcd1c0257b235",
+ "db_sha256": "11b30d61cbd8737d6205fca92e847addccfab850460aa5f680fdbbf0fa6900b9",
+ "db_bytes": 28069888,
+ "integrity": "ok",
+ "run_id": "39011506586-1",
+ "built_on_sha": "ac5782cf420fcf034cf31b87d8831cd42a2ad5c9",
+ "written_utc": "2026-10-17T06:53:13+00:00"
+}
