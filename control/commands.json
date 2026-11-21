@@ -1,0 +1,34 @@
+{
+ "version": 1,
+ "settings_rev": "7165271a-505c-4ed4-a71f-019d927df0e5",
+ "settings": {
+  "strategies": {
+   "swing": {
+    "enabled": true,
+    "allocation_pct": 30
+   },
+   "meanrev": {
+    "enabled": true,
+    "allocation_pct": 30
+   },
+   "baseline": {
+    "enabled": true,
+    "allocation_pct": 40
+   }
+  },
+  "risk_per_trade_pct": 1,
+  "max_position_pct": 20,
+  "max_exposure_pct": 80,
+  "min_cash_pct": 20,
+  "max_positions": 5,
+  "max_drawdown_pct": 10,
+  "automation_on": true,
+  "manual_approval": false,
+  "fractional_shares": false,
+  "extra_watchlist": [],
+  "blocked_symbols": []
+ },
+ "commands": [],
+ "updated_by": "harann02",
+ "updated_at": "2026-10-11T16:24:36.482Z"
+}
